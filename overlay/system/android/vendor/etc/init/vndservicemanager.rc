@@ -1,0 +1,23 @@
+# Overrides /vendor/etc/init/vndservicemanager.rc in the Android container.
+#
+# The stock /vendor/bin/vndservicemanager aborts on startup with
+#   Check failed: selinux_status_open(true ) >= 0
+# because libselinux needs /sys/fs/selinux/status. This kernel runs AppArmor as
+# the exclusive LSM (CONFIG_LSM lists apparmor before selinux) because Ubuntu
+# Touch needs AppArmor for LXC, so the LSM stacking code clears selinux_enabled
+# and init_sel_fs() never registers selinuxfs. That CHECK can never pass.
+#
+# With it dead, the vndbinder context has no context manager, so vendor
+# processes -- notably android.hardware.graphics.composer@2.4-service -- spin
+# forever in defaultServiceManager() (BR_DEAD_REPLY) and never register their
+# HIDL services, leaving Ubuntu Touch without a display.
+#
+# /system/bin/servicemanager is the same upstream program built without the
+# SELinux check, and takes the binder driver as an argument. Everything else
+# below is unchanged from the vendor original.
+service vndservicemanager /system/bin/servicemanager /dev/vndbinder
+    class core
+    user system
+    group system readproc
+    writepid /dev/cpuset/system-background/tasks
+    shutdown critical

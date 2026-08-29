@@ -1,18 +1,43 @@
-deviceinfo_name="Mi A3"
+deviceinfo_name="Xiaomi Mi A3"
 deviceinfo_manufacturer="Xiaomi"
 deviceinfo_codename="laurel_sprout"
 deviceinfo_arch="aarch64"
-deviceinfo_kernel_source="https://gitlab.com/ubports/community-ports/android9/xiaomi-mi-a3/kernel-xiaomi-laurel_sprout"
-deviceinfo_kernel_source_branch="master"
-deviceinfo_kernel_defconfig="vendor/lune_defconfig"
-deviceinfo_kernel_cmdline="ttyMSM0,115200,n8 androidboot.console=ttyMSM0 msm_geni_serial,0x4a90000 androidboot.hardware=qcom user_debug=31 msm_rtb.filter=0x237 ehci-hcd.park=3 lpm_levels.sleep_disabled=1 sched_enable_hmp=1 sched_enable_power_aware=1 service_locator.enable=1 swiotlb=1 androidboot.configfs=true androidboot.usbcontroller=a800000.dwc3 loop.max_part=7 systempart=/dev/disk/by-partlabel/system_a selinux=0 console=tty0 apparmor=1 security=apparmor"
+deviceinfo_halium_version="11"
+deviceinfo_ubuntu_touch_release="24.04-1.x"
+deviceinfo_system_partition_size="3072M"
+
+# Kernel details
+deviceinfo_kernel_source="https://github.com/nikhilsamant/android_kernel_xiaomi_sm6125.git"
+deviceinfo_kernel_source_branch="apparmor-patches"
 deviceinfo_kernel_clang_compile="true"
-deviceinfo_kernel_apply_overlay="false"
-deviceinfo_generate_bootimg="true"
-deviceinfo_bootimg_qcdt="false"
+deviceinfo_kernel_llvm_compile="true"
+deviceinfo_kernel_use_lld="true"
+deviceinfo_kernel_use_dtc_ext="true"
+
+# Chain the base config + device fragment + halium fragment
+deviceinfo_kernel_defconfig="vendor/trinket-perf_defconfig vendor/xiaomi-trinket.config vendor/laurel_sprout.config halium.config"
+# Command line args
+deviceinfo_kernel_cmdline="console=tty0 console=ttyMSM0,115200n8 androidboot.hardware=qcom androidboot.console=ttyMSM0 androidboot.memcg=1 lpm_levels.sleep_disabled=1 video=vfb:640x400,bpp=32,memsize=3072000 msm_rtb.filter=0x237 service_locator.enable=1 swiotlb=1 earlycon=msm_geni_serial,0x4a90000 loop.max_part=7 cgroup.memory=nokmem,nosocket buildvariant=user androidboot.usbcontroller=4e00000.dwc3 selinux=0 androidboot.selinux=permissive watchdog_v2.enable=0 systempart=/dev/disk/by-partlabel/system"
+
+# Features and overlays
+deviceinfo_use_overlaystore="true"
+deviceinfo_use_unified_recovery="true"
+deviceinfo_unified_recovery_ui_density="xxhdpi"
+
+# Device Tree Overrides
+deviceinfo_dtb="xiaomi/laurel_sprout-trinket-base.dtb"
+#deviceinfo_dtb="xiaomi/laurel_sprout-trinket-base.dtb"
+deviceinfo_dtbo="xiaomi/laurel_sprout-trinket-overlay.dtbo"
+#deviceinfo_kernel_apply_overlay="true"
+
+# Boot Image Header & Offsets
+deviceinfo_bootimg_header_version="2"
+deviceinfo_flash_pagesize="4096"
 deviceinfo_flash_offset_base="0x00000000"
 deviceinfo_flash_offset_kernel="0x00008000"
 deviceinfo_flash_offset_ramdisk="0x01000000"
-deviceinfo_flash_offset_second="0x00f00000"
+deviceinfo_flash_offset_second="0x00000000"
 deviceinfo_flash_offset_tags="0x00000100"
-deviceinfo_flash_pagesize="4096"
+deviceinfo_flash_offset_dtb="0x0000000001f00000"
+deviceinfo_bootimg_os_version="11.0.0"
+deviceinfo_bootimg_os_patch_level="2022-08"

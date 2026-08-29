@@ -1,1 +1,14 @@
-out/
+# Upstream clone (halium-generic-adaptation-build-tools), re-cloned by build.sh
+/build/
+
+# Downloads: toolchains, kernel clone, ramdisks (~31G)
+/workdir/
+
+# Build artifacts
+/out/
+/images/
+/ota/
+/tmp_mount/
+
+.DS_Store
+.keep

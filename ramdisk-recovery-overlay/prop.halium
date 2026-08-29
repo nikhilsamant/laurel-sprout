@@ -1,0 +1,26 @@
+# Properties loaded by Android init in the UBports recovery ramdisk (init reads
+# /prop.halium; make-bootimage.sh copies ramdisk-recovery-overlay/* into the
+# recovery ramdisk root).
+#
+# ro.systemimage.system_partition_size is read by the recovery's
+# system-image-upgrader, in ensure_system_partition_size(), on every install and
+# every delta OTA. Units are MiB.
+#
+# 3072 is the exact size of system_a/system_b on this device
+# (fastboot getvar partition-size:system_a -> 0xC0000000). Matching it makes the
+# upgrader take the "System partition size is sufficient, no LVM needed" path,
+# and on delta updates it then calls check_and_enlarge_filesystem(), which
+# resize2fs's the rootfs to fill the partition if the two ever drift apart.
+#
+# Do NOT copy the 4500 the Fairphone reference ports use. If the required size
+# exceeds the real partition and ro.systemimage.use_lvm is not set, the upgrader
+# falls through to resize_system_partition_in_super(), which needs
+# /dev/block/by-name/super. laurel_sprout has no super partition -- static A/B,
+# confirmed by "fastboot getvar partition-size:super" returning
+# "GetVar Variable Not found" -- so that path returns 1 and the upgrader exits 1.
+# Every OTA would fail.
+#
+# Keep this in sync with deviceinfo_system_partition_size in ../deviceinfo
+# (3072M). They describe the same number to two different consumers: deviceinfo
+# sizes the image the build produces, this sizes what recovery expects to find.
+ro.systemimage.system_partition_size=3072

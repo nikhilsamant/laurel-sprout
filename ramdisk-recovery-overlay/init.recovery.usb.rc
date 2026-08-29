@@ -1,0 +1,6 @@
+on init
+    setprop sys.usb.controller 4e00000.dwc3
+    setprop sys.usb.configfs 1
+
+on fs
+    setprop sys.usb.controller 4e00000.dwc3
