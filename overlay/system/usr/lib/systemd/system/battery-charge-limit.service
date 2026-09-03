@@ -1,0 +1,72 @@
+# Cap battery charging at a state of charge -- Xiaomi Mi A3 (laurel_sprout).
+#
+# Lands in /usr/lib/systemd/system/ because that directory already carries a
+# .halium-overlay-dir marker in this repo, so the overlay store merges it with
+# overlayfs and new files land intact. The helper script sits beside this unit
+# for the same reason; systemd only loads files with a unit suffix, so a
+# neighbouring .sh is ignored by it.
+#
+# Started from /usr/libexec/lxc-android-config/device-hacks, the same way the
+# fairphone-fp4 reference port starts its dummy_cacert.service. The [Install]
+# section below is there so `systemctl enable` also works, but nothing in the
+# image relies on it.
+#
+# CONFIGURATION -- three layers, in increasing precedence.
+#
+# 1. The Environment= defaults below: stop at 80%, resume at 75%.
+#
+# 2. Root-owned EnvironmentFiles, for a port- or admin-level default. Both are
+#    optional (leading '-'). /etc/writable is the one that actually works on
+#    device: the rootfs is mounted ro (`/dev/disk/by-partlabel/system_a / ext4
+#    ro`) and only a handful of /etc subdirectories are bind-mounted rw from
+#    userdata -- /etc/writable is one, /etc/default is NOT. /etc/default is kept
+#    first, as the conventional location, in case a future image ships one.
+#
+# 3. ~phablet/.config/battery-charge-limit, re-read by the script on EVERY poll.
+#    This is the layer a person actually uses: no root, no restart, effective
+#    within CHARGE_POLL_INTERVAL.
+#
+#        echo CHARGE_LIMIT=85 > ~/.config/battery-charge-limit
+#
+#    CHARGE_RESUME is optional there and defaults to CHARGE_LIMIT - 5.
+#    CHARGE_LIMIT=100 disables limiting. Accepted range is 50..100; anything
+#    outside it, unparseable or self-contradictory is ignored and the layers
+#    above stand.
+#
+#    Note this file is deliberately NOT listed as an EnvironmentFile. It is
+#    written by the unprivileged user and read by a root service: an
+#    EnvironmentFile would let its contents set any environment variable on that
+#    root process, LD_PRELOAD included. The script parses it by hand with a sed
+#    that can only emit digits, and range-checks the result. See the long
+#    comment in battery-charge-limit.sh.
+#
+# Path overridable with CHARGE_USER_CONF= if the account is ever not "phablet".
+
+[Unit]
+Description=Cap battery charging at a configurable state of charge
+Documentation=file:/usr/lib/systemd/system/battery-charge-limit.sh
+ConditionPathExists=/sys/class/power_supply/battery/charging_enabled
+
+[Service]
+Type=simple
+Environment=CHARGE_LIMIT=80
+Environment=CHARGE_RESUME=75
+Environment=CHARGE_POLL_INTERVAL=30
+EnvironmentFile=-/etc/default/battery-charge-limit
+EnvironmentFile=-/etc/writable/battery-charge-limit
+ExecStart=/usr/lib/systemd/system/battery-charge-limit.sh
+
+# Never leave the charger disabled behind us. Without this, stopping or masking
+# the unit while it happens to be holding charging off would leave the phone
+# plugged in and not charging, with nothing left running to undo it.
+ExecStopPost=/bin/sh -c 'echo 1 > /sys/class/power_supply/battery/charging_enabled'
+
+# on-failure, NOT always: the script exits 0 when the user switches optimisation
+# off, and that clean exit must stick or the unit would immediately come back
+# and the switch would appear to do nothing. Crashes still get restarted.
+# battery-charge-limit.path starts it again when the config file changes.
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

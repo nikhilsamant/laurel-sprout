@@ -1,0 +1,36 @@
+# Restart the charge limiter when its config changes -- Xiaomi Mi A3.
+#
+# This unit is what lets an unprivileged settings page stop and start a root
+# service without a polkit rule, a D-Bus service or a setuid helper.
+#
+#   switch OFF -> the page writes CHARGE_ENABLED=0. The running service reads
+#                 that on its next poll, hands the charger back and exits 0.
+#                 Restart=on-failure means a clean exit stays exited, so the
+#                 unit genuinely goes inactive.
+#   switch ON  -> the page rewrites the same file. systemd sees the change here
+#                 and starts the service again, which reads CHARGE_ENABLED=1 and
+#                 resumes limiting.
+#
+# The off direction does not actually depend on this unit -- the service polls
+# the file itself. Only the on direction does, which is worth knowing when
+# debugging: if the switch turns limiting off but cannot turn it back on, this
+# unit is what to look at.
+#
+# Both PathChanged and PathModified are listed on purpose. Qt.labs.settings
+# writes through QSettings, which saves atomically: it writes a temporary file
+# and renames it over the target. That is a rename in the parent directory
+# rather than a write to the watched inode, so the two directives cover both the
+# in-place-edit case (someone using a text editor over SSH) and the
+# rename-into-place case (the settings page).
+
+[Unit]
+Description=Watch the charge limiter configuration for changes
+Documentation=file:/usr/lib/systemd/system/battery-charge-limit.sh
+
+[Path]
+PathChanged=/home/phablet/.config/battery-charge-limit
+PathModified=/home/phablet/.config/battery-charge-limit
+Unit=battery-charge-limit.service
+
+[Install]
+WantedBy=multi-user.target

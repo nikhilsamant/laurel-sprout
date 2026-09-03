@@ -1,0 +1,21 @@
+{
+    "icon": "flash-on",
+    "name": "Charging",
+    "translations": "lomiri-system-settings",
+    "category": "system",
+    "priority": 1,
+    "keywords": [
+        "battery",
+        "charge",
+        "charging",
+        "limit",
+        "cap",
+        "health",
+        "longevity",
+        "wear"
+    ],
+    "has-dynamic-keywords": false,
+    "has-dynamic-visibility": false,
+    "visible-if-file-exists": "/usr/lib/systemd/system/battery-charge-limit.sh",
+    "page-component": "PageComponent.qml"
+}
