@@ -1,0 +1,6 @@
+Exists, in non-executable form, to prevent time_daemon from running at all.
+
+It sets the system clock from the raw PM6125 RTC counter and so undoes the
+restore that timekeeper.service has already done. Ubuntu Touch keeps the RTC
+offset itself; the Android daemon is not wanted here. Same stub as the
+fairphone-fp4 reference port. See "time_daemon" in the README.

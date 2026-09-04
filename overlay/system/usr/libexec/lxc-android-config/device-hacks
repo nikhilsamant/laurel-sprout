@@ -1,0 +1,189 @@
+#!/bin/sh
+# device-hacks for Xiaomi Mi A3 (laurel_sprout).
+#
+# Overlays the /usr/libexec/lxc-android-config/device-hacks placeholder. Run by
+# device-hacks.service, After=lxc-android-config.service (i.e. once the Android
+# container is up), as root on the GNU/Linux side.
+#
+# Three things happen here. Two are jobs an Android vendor service would
+# normally do and that nothing on the Ubuntu Touch side does:
+#
+#   1. bring up the modem (MPSS) subsystem, which Wi-Fi depends on;
+#   2. run the graphics composer HAL, which init cannot start on this device.
+#
+# The third is the reverse -- an Android vendor service that must not run here:
+#
+#   3. time_daemon, which overwrites the system clock from the raw PMIC RTC.
+
+SELF=$(readlink -f "$0")
+
+# Re-invoked by systemd-run as the transient halium-modem-wlan.service. This
+# lives inside device-hacks rather than in a helper script because the only
+# writable directories available at this point (/run) are mounted noexec.
+if [ "$1" = "--hold-modem" ]; then
+    # subsys_device_open() calls subsystem_get(); the matching release() calls
+    # subsystem_put(). So the MPSS stays powered exactly as long as fd 9 is held.
+    exec 9< /dev/subsys_modem || exit 1
+
+    # icnss reports the firmware ready a few seconds after the MPSS leaves reset.
+    # Writing "ON" before that blocks for HDD_WLAN_START_WAIT_TIME and then fails
+    # with -EINVAL, so wait for the driver's own log line rather than guessing.
+    i=0
+    while [ "$i" -lt 60 ]; do
+        if dmesg | grep -q "WLAN FW is ready"; then
+            break
+        fi
+        sleep 1
+        i=$((i + 1))
+    done
+
+    i=0
+    while [ "$i" -lt 5 ]; do
+        if [ -e /sys/class/net/wlan0 ]; then
+            break
+        fi
+        printf 'ON\n' > /dev/wlan 2>/dev/null
+        i=$((i + 1))
+    done
+
+    # fd 9 survives this exec; closing it would drop the modem again.
+    exec sleep infinity
+fi
+
+ANDROID_LD=/android/system/lib64:/android/system/lib64/vndk-30
+android_setprop() {
+    LD_LIBRARY_PATH="$ANDROID_LD" /android/system/bin/linker64 \
+        /android/system/bin/setprop "$@" 2>/dev/null
+}
+
+# Wait for the container's property service before issuing ctl.* commands.
+# This doubles as the readiness gate for the modem block below: ueventd is up
+# by the time init has published the property socket.
+i=0
+while [ ! -S /dev/socket/property_service ] && [ "$i" -lt 30 ]; do
+    sleep 1
+    i=$((i + 1))
+done
+
+# --- Android time_daemon ----------------------------------------------------
+#
+# /vendor/bin/time_daemon sets the system clock from the raw PM6125 RTC counter,
+# which reads epoch+uptime: nothing can write that RTC, because the SPMI arbiter
+# refuses writes to a peripheral this execution environment does not own (kernel
+# commit 153f6457f452 reverted the qcom,qpnp-rtc-write attempt). On Android that
+# is fine, because time_daemon is also the thing that re-applies the stored
+# offset, so its two halves add up. Here they do not: Ubuntu Touch restores the
+# offset itself in timekeeper.service (ExecStart=timekeeper restore,
+# ExecStop=timekeeper store) and time_daemon then clobbers the result a few
+# seconds later.
+#
+# Measured on device 2026-09-06: timekeeper.service activated at the correct
+# 2026-09-06 13:14:24, time_daemon started at boot+14.5s, and NetworkManager and
+# lightdm activated at 1970-01-17 05:00:37 -- exactly boot+19s in RTC-counter
+# terms. Everything afterwards ran at 1970, and systemd-timesyncd then re-stamped
+# /var/lib/systemd/timesync/clock with the bogus time, destroying the rollback
+# floor for the next boot as well.
+#
+# The binary is overlaid in non-executable form
+# (overlay/system/android/vendor/bin/time_daemon), so init cannot exec it; this
+# only has to break init's resulting restart loop. Same pair as the
+# fairphone-fp4 and fairphone-fp5 reference ports.
+android_setprop ctl.stop time_daemon
+
+# --- Battery charge limit ---------------------------------------------------
+#
+# Keeps the pack off 4.4V when it does not need to be there. Configuration and
+# the reasoning behind the sysfs knob it uses are in the unit and the script:
+# /usr/lib/systemd/system/battery-charge-limit.{service,sh}
+#
+# Started here rather than enabled, the same way the fairphone-fp4 reference
+# port starts its dummy_cacert.service from this script.
+#
+# The .path unit goes first and unconditionally: it watches the config file and
+# is what restarts the service when the user switches optimisation back on in
+# System Settings. The service itself exits 0 straight away if the switch is
+# off, so starting it here is harmless either way -- and Restart=on-failure
+# means that clean exit sticks.
+systemctl start battery-charge-limit.path
+systemctl start battery-charge-limit.service
+
+# --- Modem (MPSS) + Wi-Fi ---------------------------------------------------
+#
+# Nothing on the Ubuntu Touch side ever boots the modem. On Android a vendor
+# service holds /dev/subsys_modem open (see the --hold-modem block above).
+# Without it the boot log shows PIL loading adsp, cdsp, venus and ipa_fws, and
+# never says "modem: Brought out of reset".
+#
+# That single gap is what breaks Wi-Fi. This is an integrated WCN3990, so its
+# firmware rides inside the MPSS image: with the modem down icnss never sees the
+# WLFW QMI service, never signals "WLAN FW is ready", and the qcacld driver's
+# wlan_start_comp completion times out ("Timed-out!!" in dmesg).
+#
+# qcacld is built into the kernel (CONFIG_QCA_CLD_WLAN=y, from
+# vendor/xiaomi-trinket.config) but deliberately defers hdd_driver_load() until
+# userspace writes "ON" to /dev/wlan (wlan_hdd_state_ctrl_param_write). On
+# Android the Wi-Fi HAL does that write. Here nothing does, so we do it.
+#
+# Booting the MPSS also brings up rmnet_ipa0/rmnet_data*, which cellular needs.
+#
+# It runs in its own transient unit for the same reason as the composer below:
+# device-hacks.service is Type=oneshot with KillMode=control-group, so its cgroup
+# is torn down the moment this script returns -- which would close the fd and
+# shut the modem straight back down.
+
+# Skipped if a packaged halium-modem-wlan.service is already doing this --
+# systemd-run cannot claim a unit name that a real unit file owns.
+if ! systemctl is-active --quiet halium-modem-wlan.service; then
+    systemctl reset-failed halium-modem-wlan.service 2>/dev/null
+    systemd-run --collect --unit=halium-modem-wlan \
+        --description="Halium: hold the MPSS up and start the WLAN driver" \
+        --property=Restart=on-failure --property=RestartSec=5 \
+        "$SELF" --hold-modem >/dev/null 2>&1
+fi
+
+# --- Graphics composer HAL --------------------------------------------------
+#
+# WORKAROUND, not a fix. vendor.hwcomposer-2-4 exits 1 after ~5.1s under init on
+# this device and never registers IComposer, so Mir's libhwc2_compat_layer never
+# gets a display and lightdm times out -- no Lomiri. The cause is unknown; see
+# the port README for the hypotheses ruled out by measurement.
+#
+# The same binary, with init's exact credentials (uid system, gid graphics,
+# supplementary drmrpc) but started from here rather than by init, runs fine and
+# registers IComposer @2.1/2.2/2.3/2.4. So stop init's failing copy and start it
+# here instead.
+#
+# Remove this block once the underlying init failure is understood.
+
+# Stop init's crash-looping copy so it does not contend for the HWC HAL.
+android_setprop ctl.stop vendor.hwcomposer-2-4
+sleep 1
+
+# Start it in its OWN transient unit. It must not be a child of this script:
+# device-hacks.service is Type=oneshot with KillMode=control-group, so anything
+# still running in its cgroup is killed the moment this script returns.
+# Deliberately no LD_LIBRARY_PATH -- this is the exact invocation verified to
+# work on-device.
+systemctl reset-failed hwcomposer-halium.service 2>/dev/null
+systemd-run --collect --unit=hwcomposer-halium \
+    --description="Halium workaround: Android graphics composer HAL" \
+    --property=Restart=always --property=RestartSec=2 \
+    setpriv --reuid 1000 --regid 1003 --groups 1003,1027 \
+    /android/system/bin/linker64 \
+    /android/vendor/bin/hw/android.hardware.graphics.composer@2.4-service \
+    >/dev/null 2>&1
+
+# lightdm is ordered After=device-hacks.service, so block here until the
+# composer is actually up -- otherwise lomiri-system-compositor can start first
+# and time out waiting for IComposer.
+i=0
+while [ "$i" -lt 20 ]; do
+    if pgrep -f "graphics\.composer@2\.4-service" >/dev/null 2>&1; then
+        sleep 3   # let registerAsService() complete
+        break
+    fi
+    sleep 1
+    i=$((i + 1))
+done
+
+exit 0
