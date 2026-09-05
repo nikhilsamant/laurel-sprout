@@ -1,0 +1,112 @@
+#!/bin/sh
+# Drop the cellular data path while Wi-Fi is up -- Xiaomi Mi A3 (laurel_sprout).
+#
+# WHY
+#
+# device-hacks pins the MPSS because Wi-Fi needs the WLFW QMI service from it
+# (integrated WCN3990: the WLAN firmware rides inside the modem image). Booting
+# the modem also brings up the rmnet data path, and that path is what stops the
+# device sleeping. Measured with msm_show_resume_irq_mask=1, on battery:
+#
+#                        rmnet UP        rmnet DOWN
+#   IPA wakes            66 of 69        0 of 27
+#   suspend attempts     1 per 4.2s      1 per 21.7s
+#   avg sleep duration   9.0s            40.8s
+#   suspend residency    83.3%           94.1%
+#
+# IPA raises no interrupts at all while awake (+0 over 60s idle), so this is
+# purely the IPA suspend-IRQ path. Wi-Fi is unaffected: the modem stays ONLINE,
+# only its data path goes away.
+#
+# WHY nmcli AND NOT `ip link`
+#
+# An earlier version downed rmnet_ipa0 with iproute2. It saved the power and
+# broke mobile data: rmnet runs through the IPA *hardware* datapath, ipacm
+# programs IPA's filter/route rules when a data call comes up, and yanking the
+# netdev left those rules stale. The link came back, the routing table looked
+# perfect, and every packet was silently dropped -- which presents in a browser
+# as ERR_NAME_NOT_RESOLVED and sends you hunting DNS that was never the problem.
+#
+# The WWAN radio switch is the correct layer, the same one the Settings
+# mobile-data toggle drives. Round-tripped on device before this was written:
+#   wwan off -> ril_0 unavailable, no rmnet, egress fails
+#   wwan on  -> ril_0 connected on a NEW rmnet iface with a NEW address, egress OK
+# The fresh address is the point: the PDP context is rebuilt, not reused.
+#
+# WHY dispatcher.d AND NOT no-wait.d
+#
+# no-wait.d is documented, and the string is in /usr/libexec/nm-dispatcher right
+# beside pre-up.d and pre-down.d, so it looks like the obviously correct home
+# for a script that must not block NetworkManager. On this build NM never
+# executes anything from it. Proven with identical probes in both directories:
+#
+#   15:54:08 PROBE[main] iface=wlan0 action=down
+#   15:54:53 PROBE[main] iface=wlan0 action=up
+#
+# PROBE[nowait] never fired. Do not "tidy" this back into no-wait.d.
+# Blocking NM costs nothing here: all the slow work happens in a detached
+# transient unit, so this script returns in microseconds.
+
+IFACE="$1"
+ACTION="$2"
+
+# The marker MUST be as persistent as the thing it describes. NetworkManager
+# stores the WWAN radio flag in /var/lib/NetworkManager/NetworkManager.state,
+# which survives a reboot. An earlier version kept this marker in /run, which is
+# tmpfs and does not. Reboot while Wi-Fi was up and you got wwan=disabled with
+# no marker -- at which point the down path correctly refuses to act and mobile
+# data can never come back on its own. /var/lib/NetworkManager is a rw
+# bind-mount from userdata, so the two now persist together.
+MARKER=/var/lib/NetworkManager/laurel-sprout-wwan-off-by-us
+LOG=/run/rmnet-power.log
+
+# Log to a file, not stdout. NetworkManager does not reliably surface dispatcher
+# stdout to the journal -- that is what made an earlier silent failure invisible
+# for two rounds of debugging.
+log() { echo "$(date '+%H:%M:%S') $*" >>"$LOG" 2>/dev/null; }
+
+log "INVOKED iface=$IFACE action=$ACTION"
+[ "$IFACE" = "wlan0" ] || exit 0
+
+# One transient unit name PER ACTION. A single shared name let a down event
+# arriving during an up event's settle sleep collide on the name, and one of the
+# two would silently vanish.
+UNIT="laurel-sprout-wwan-$ACTION"
+
+run_detached() {
+    systemctl stop "$UNIT" 2>/dev/null
+    systemctl reset-failed "$UNIT" 2>/dev/null
+    systemd-run --collect --unit="$UNIT" \
+        --description="laurel_sprout: Wi-Fi/WWAN power handover ($ACTION)" \
+        /bin/sh -c "$1" >>"$LOG" 2>&1
+    log "  systemd-run $UNIT rc=$?"
+}
+
+case "$ACTION" in
+up)
+    # Settle, then re-check: a Wi-Fi association that flaps must not leave
+    # mobile data switched off behind it.
+    run_detached "
+        exec >>$LOG 2>&1
+        sleep 5
+        st=\$(cat /sys/class/net/wlan0/operstate 2>/dev/null)
+        [ \"\$st\" = up ] || { echo \"  [up] bail: operstate=\$st\"; exit 0; }
+        rd=\$(nmcli radio wwan 2>&1)
+        [ \"\$rd\" = enabled ] || { echo \"  [up] bail: wwan=\$rd\"; exit 0; }
+        nmcli radio wwan off && touch $MARKER
+        echo \"  [up] wwan now=\$(nmcli radio wwan 2>&1)\"
+    "
+    ;;
+down)
+    # Only ever re-enable if WE disabled it, so turning mobile data off by hand
+    # is not silently undone.
+    run_detached "
+        exec >>$LOG 2>&1
+        [ -e $MARKER ] || { echo '  [down] bail: not disabled by us'; exit 0; }
+        nmcli radio wwan on && rm -f $MARKER
+        echo \"  [down] wwan now=\$(nmcli radio wwan 2>&1)\"
+    "
+    ;;
+esac
+
+exit 0
