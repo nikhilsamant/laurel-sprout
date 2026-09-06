@@ -56,8 +56,8 @@ rootfs tarball and need a full rootfs build and reflash.
 
 ## Kernel
 
-`https://gitlab.com/xiaomi-mi-a3/kernel-xiaomi-sm6125`, branch `main`
-(fork of `lineage-23.2`, 4.14-openela).
+`https://gitlab.com/ubports/porting/community-ports/android11/xiaomi-mi-a3/kernel-xiaomi-laurel_sprout`,
+branch `halium-11` (fork of `lineage-23.2`, 4.14-openela).
 
 ## Layout
 

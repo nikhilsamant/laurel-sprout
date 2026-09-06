@@ -7,8 +7,8 @@ deviceinfo_ubuntu_touch_release="24.04-1.x"
 deviceinfo_system_partition_size="3072M"
 
 # Kernel
-deviceinfo_kernel_source="https://gitlab.com/xiaomi-mi-a3/kernel-xiaomi-sm6125"
-deviceinfo_kernel_source_branch="main"
+deviceinfo_kernel_source="https://gitlab.com/ubports/porting/community-ports/android11/xiaomi-mi-a3/kernel-xiaomi-laurel_sprout"
+deviceinfo_kernel_source_branch="halium-11"
 deviceinfo_kernel_clang_compile="true"
 deviceinfo_kernel_llvm_compile="true"
 deviceinfo_kernel_use_lld="true"
