@@ -9,6 +9,7 @@
 /images/
 /ota/
 /tmp_mount/
+/ramdisk-recovery.img
 
 .DS_Store
 .keep
