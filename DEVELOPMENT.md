@@ -32,8 +32,8 @@ docker exec ut-builder-amd64 bash -c 'cd /tmp/device-xiaomi-laurel_sprout && ./b
 
 ## Kernel
 
-`https://github.com/nikhilsamant/android_kernel_xiaomi_sm6125.git`, branch
-`laurel_sprout` (fork of `lineage-23.2`, 4.14.357-openela).
+`https://gitlab.com/xiaomi-mi-a3/kernel-xiaomi-sm6125`, branch `main`
+(fork of `lineage-23.2`, 4.14.357-openela).
 
 Five fixes were required to boot Ubuntu Touch. Each was invisible until the
 previous one was cleared:

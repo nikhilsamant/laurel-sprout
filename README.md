@@ -56,8 +56,8 @@ rootfs tarball and need a full rootfs build and reflash.
 
 ## Kernel
 
-`https://github.com/nikhilsamant/android_kernel_xiaomi_sm6125.git`, branch as set
-in `deviceinfo_kernel_source_branch` (fork of `lineage-23.2`, 4.14-openela).
+`https://gitlab.com/xiaomi-mi-a3/kernel-xiaomi-sm6125`, branch `main`
+(fork of `lineage-23.2`, 4.14-openela).
 
 ## Layout
 
