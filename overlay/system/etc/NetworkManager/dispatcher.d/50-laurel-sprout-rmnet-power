@@ -1,76 +1,28 @@
 #!/bin/sh
 # Drop the cellular data path while Wi-Fi is up -- Xiaomi Mi A3 (laurel_sprout).
 #
-# WHY
-#
-# device-hacks pins the MPSS because Wi-Fi needs the WLFW QMI service from it
-# (integrated WCN3990: the WLAN firmware rides inside the modem image). Booting
-# the modem also brings up the rmnet data path, and that path is what stops the
-# device sleeping. Measured with msm_show_resume_irq_mask=1, on battery:
-#
-#                        rmnet UP        rmnet DOWN
-#   IPA wakes            66 of 69        0 of 27
-#   suspend attempts     1 per 4.2s      1 per 21.7s
-#   avg sleep duration   9.0s            40.8s
-#   suspend residency    83.3%           94.1%
-#
-# IPA raises no interrupts at all while awake (+0 over 60s idle), so this is
-# purely the IPA suspend-IRQ path. Wi-Fi is unaffected: the modem stays ONLINE,
-# only its data path goes away.
-#
-# WHY nmcli AND NOT `ip link`
-#
-# An earlier version downed rmnet_ipa0 with iproute2. It saved the power and
-# broke mobile data: rmnet runs through the IPA *hardware* datapath, ipacm
-# programs IPA's filter/route rules when a data call comes up, and yanking the
-# netdev left those rules stale. The link came back, the routing table looked
-# perfect, and every packet was silently dropped -- which presents in a browser
-# as ERR_NAME_NOT_RESOLVED and sends you hunting DNS that was never the problem.
-#
-# The WWAN radio switch is the correct layer, the same one the Settings
-# mobile-data toggle drives. Round-tripped on device before this was written:
-#   wwan off -> ril_0 unavailable, no rmnet, egress fails
-#   wwan on  -> ril_0 connected on a NEW rmnet iface with a NEW address, egress OK
-# The fresh address is the point: the PDP context is rebuilt, not reused.
-#
-# WHY dispatcher.d AND NOT no-wait.d
-#
-# no-wait.d is documented, and the string is in /usr/libexec/nm-dispatcher right
-# beside pre-up.d and pre-down.d, so it looks like the obviously correct home
-# for a script that must not block NetworkManager. On this build NM never
-# executes anything from it. Proven with identical probes in both directories:
-#
-#   15:54:08 PROBE[main] iface=wlan0 action=down
-#   15:54:53 PROBE[main] iface=wlan0 action=up
-#
-# PROBE[nowait] never fired. Do not "tidy" this back into no-wait.d.
-# Blocking NM costs nothing here: all the slow work happens in a detached
-# transient unit, so this script returns in microseconds.
+# The modem is pinned for Wi-Fi, but its rmnet data path keeps the SoC awake
+# (IPA suspend-IRQ storm). Turn the WWAN radio off when wlan0 comes up, back on
+# when Wi-Fi goes away. Uses `nmcli radio wwan`, NOT `ip link` (which leaves
+# IPA's HW filter/route rules stale and silently drops packets). Must live in
+# dispatcher.d, not no-wait.d (NM never runs no-wait.d on this build). Full
+# rationale and measurements in DEVELOPMENT.md.
 
 IFACE="$1"
 ACTION="$2"
 
-# The marker MUST be as persistent as the thing it describes. NetworkManager
-# stores the WWAN radio flag in /var/lib/NetworkManager/NetworkManager.state,
-# which survives a reboot. An earlier version kept this marker in /run, which is
-# tmpfs and does not. Reboot while Wi-Fi was up and you got wwan=disabled with
-# no marker -- at which point the down path correctly refuses to act and mobile
-# data can never come back on its own. /var/lib/NetworkManager is a rw
-# bind-mount from userdata, so the two now persist together.
+# Marker must persist like the WWAN flag it tracks: /var/lib/NetworkManager is
+# a rw bind-mount from userdata (/run is tmpfs and would not survive a reboot).
 MARKER=/var/lib/NetworkManager/laurel-sprout-wwan-off-by-us
 LOG=/run/rmnet-power.log
 
-# Log to a file, not stdout. NetworkManager does not reliably surface dispatcher
-# stdout to the journal -- that is what made an earlier silent failure invisible
-# for two rounds of debugging.
+# NM does not reliably surface dispatcher stdout to the journal; log to a file.
 log() { echo "$(date '+%H:%M:%S') $*" >>"$LOG" 2>/dev/null; }
 
 log "INVOKED iface=$IFACE action=$ACTION"
 [ "$IFACE" = "wlan0" ] || exit 0
 
-# One transient unit name PER ACTION. A single shared name let a down event
-# arriving during an up event's settle sleep collide on the name, and one of the
-# two would silently vanish.
+# One transient unit name per action, so an up/down overlap cannot collide.
 UNIT="laurel-sprout-wwan-$ACTION"
 
 run_detached() {

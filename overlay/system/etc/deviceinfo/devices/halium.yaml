@@ -1,14 +1,6 @@
 # Device config for Xiaomi Mi A3 (laurel_sprout), read by libdeviceinfo.
-#
-# Overlays the empty /etc/deviceinfo/devices/halium.yaml placeholder, whose own
-# comment says it is "intended for use as a bind-mount overlay target, like
-# device-specific Halium ports".
-#
-# Without this, lomiri-system-compositor logs "No device yaml config found!"
-# and Mir's android platform runs on defaults.
-#
-# Note ro.product.device is the GSI name (halium_arm64); the real codename is
-# in ro.product.vendor.device, so both are listed under Names.
+# ro.product.device is the GSI name (halium_arm64); the real codename is in
+# ro.product.vendor.device, so both are listed under Names.
 LAUREL_SPROUT:
   Names:
     - laurel_sprout
@@ -19,7 +11,7 @@ LAUREL_SPROUT:
 
   PrettyName: Xiaomi Mi A3
   DeviceType: phone
-  # 720x1560 panel; the Halium 9 port for this device used GRID_UNIT_PX=15.
+  # 720x1560 panel; the Halium 9 port used GRID_UNIT_PX=15.
   GridUnit: 15
   SupportedOrientations:
     - Portrait
@@ -27,96 +19,16 @@ LAUREL_SPROUT:
     - Landscape
     - InvertedLandscape
 
-  # --- Subsystem selection ---------------------------------------------------
-  # All three UBports Halium 11/12 reference ports (fairphone-fp4, fairphone-fp5,
-  # volla-mimameid) set these three keys; none of them are device-tuned values,
-  # they just say which implementation the stack should use on a Halium 11 base.
-  #
-  # OfonoPlugin -- selects ofono's binder plugin instead of the legacy rilmodem
-  # transport. Android 11 has no /dev/socket/rild; the modem is behind the
-  # IRadio HIDL HAL, reached over binder. Without this ofono looks for a socket
-  # that does not exist and no modem ever appears. The slot layout it then uses
-  # lives in /etc/ofono/binder.d/qti.conf and /etc/ofono/ril_subscription.conf,
-  # both shipped by this port.
-  #
-  # OfonoImplementsIms -- the QTI radio HAL provides IMS, so ofono should not
-  # emulate it. Set by both Fairphone reference ports (also QTI).
-  #
-  # FilesystemEncryption -- gates whether Ubuntu Touch offers device encryption.
-  # The kernel side is already in place: CONFIG_F2FS_FS_ENCRYPTION=y selects
-  # CONFIG_FS_ENCRYPTION, and ext4's fscrypt code is guarded on that same symbol,
-  # with CONFIG_FS_ENCRYPTION_INLINE_CRYPT=y and CONFIG_BLK_INLINE_ENCRYPTION=y
-  # on top. fs/crypto/keyring.c is present, so v2 policies work -- which is what
-  # the shipped /etc/fscrypt.conf asks for ("policy_version": "2").
+  # Subsystem selection, as the Halium 11 reference ports (fairphone-fp4/fp5).
+  # OfonoPlugin selects ofono's binder plugin (Android 11 has no /dev/socket/rild).
   OfonoPlugin: binder
   OfonoImplementsIms: true
   FilesystemEncryption: true
 
-  # --- Display cutouts -------------------------------------------------------
-  # Waterdrop notch, top centre. All values are physical pixels on the 720x1560
-  # panel (320dpi, so 1dp = 2px).
-  #
-  # Geometry is taken from the device's own LineageOS framework overlay rather
-  # than measured by eye -- android_device_xiaomi_laurel_sprout, lineage-23.2,
-  # overlay/frameworks/base/core/res/res/values/:
-  #
-  #   config_mainBuiltInDisplayCutout  (config.xml, px, origin = centre-top):
-  #       M -89.6 0
-  #       C -65.1 0 -51.2 0.2 -37 31.3
-  #       C -29.3 44.1 -15.5 53 0 53
-  #       C 15.5 53 29.3 44.1 37 31.3
-  #       C 51.2 0.2 65.1 0 89.6 0
-  #       L -89.6 0 Z
-  #   rounded_corner_radius            (dimens.xml): 75px
-  #
-  # So the notch bounding box is x 270.4..449.6 (179.2 wide) by 53 tall, centred
-  # on x=360.
-  #
-  # The 179.2 width is only reached at the very top edge -- it is a teardrop, and
-  # evaluating the Bezier gives a full width of ~115px at y=5, ~89px at y=18 and
-  # ~74px at y=42. Indicator icons sit in a band roughly y=18..42 (centred in the
-  # panel, with their own padding), where at most ~89px is obstructed. A 120px
-  # centre rect therefore covers the notch from y~4 downwards while costing only
-  # 17% of the bar instead of the 25% a full 180px bounding box would take.
-  # Widen it towards 180 if anything still shows through near the top edge.
-  #
-  # Corner widths use the formula from the UBports porting docs,
-  #   w ~= r - sqrt(r^2 - (r - h/4)^2)
-  # with r=75 and h=60 -> w=30. That is what keeps the clock, which is always the
-  # rightmost collapsed indicator, from running under the rounded corner.
-  #
-  # These are avoidance areas, not a description of the glass -- the docs expect
-  # tinkering. Check the clock, the battery percentage and a full row of
-  # indicators before calling it done.
-  #
-  # Only the collapsed bar gets avoidance areas. DisplayCutoutsExpanded is
-  # deliberately not set: the expanded tab row sits at roughly y=45..130 while
-  # the notch only reaches y=53, so the tabs already clear the camera, and the
-  # cutouts there cost more than they buy.
-  #
-  # Lomiri lays the indicator row out in
-  # Panel/WithCutouts/LomiriPanel/PanelItemRow.qml, recalculateItems(). For a
-  # horizontal row it reads only the cutout's `x` and `width` -- `y` and `height`
-  # are never consulted -- and any item overlapping a cutout is pushed past it
-  # (screenX = cutoutPos + cutoutSize). So a centre cutout does not merely
-  # reserve space, it splits the bar into independent sections.
-  #
-  # Declaring the centre rect for the expanded row would leave sections of
-  # x 30..300 and x 420..690, i.e. 270px each. An expanded tab is
-  # Math.max(units.gu(10), label width) = at least 150px at GRID_UNIT_PX=15, and
-  # more for a label like "Time and Date" -- so exactly one tab would fit per
-  # section and only two would ever be visible. With no expanded cutouts at all
-  # the row is a single 720px run, which fits about three.
-  #
-  # The collapsed bar keeps the centre rect -- that is the one you look at all
-  # day, and it is what keeps indicators out from under the camera.
-  #
-  # NOTE: nothing on the installed image reads these keys yet. lomiri
-  # 0.5.0+0~20260825204425.5+ubports24.04.1 ships no Panel/WithCutouts QML and
-  # the string "DisplayCutouts" appears nowhere under /usr besides this file, so
-  # the panel still right-aligns its row against the bare screen edge and the
-  # clock is clipped by the 75px corner. The config is kept for the Lomiri build
-  # that does support it.
+  # Waterdrop notch, top centre. Physical px on the 720x1560 panel. Avoidance
+  # areas only on the collapsed bar; a centre cutout splits the row in two, so
+  # the expanded row is left as one run. Geometry from the LineageOS framework
+  # overlay; see DEVELOPMENT.md. Nothing on the current image reads these yet.
   CollapsedPanelHeight: 60
   DisplayCutoutsCollapsed:
     - 0 0 30 60

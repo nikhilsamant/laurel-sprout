@@ -1,13 +1,4 @@
-#/dev/block/bootdevice/by-name/system       /                ext4      ro,barrier=1                                          wait,slotselect,avb
-#/dev/block/bootdevice/by-name/vendor       /vendor          ext4      ro,barrier=1                                          wait,slotselect,avb
-#/dev/block/bootdevice/by-name/metadata     /metadata        ext4      noatime,nosuid,nodev,discard                          wait,formattable
-#/dev/block/bootdevice/by-name/userdata     /data            ext4      noatime,nosuid,nodev,discard,reserve_root=32768,resgid=1065,fsync_mode=nobarrier   latemount,wait,check,quota,reservedsize=128M
-#/dev/block/mmcblk1p1                       /sdcard          vfat      nosuid,nodev                                          wait
-#/dev/block/bootdevice/by-name/boot         /boot            emmc      defaults                                              defaults
-#/dev/block/bootdevice/by-name/misc         /misc            emmc      defaults                                              defaults
-
-#device         mount point      fstype        [device2] [length=]
-
+# device                                     mount point     fstype  mount flags                                                     fs_mgr flags
 /dev/block/bootdevice/by-name/system         /               ext4    ro,barrier=1                                                    wait,slotselect
 /dev/block/bootdevice/by-name/userdata       /data           ext4    nodev,noatime,nosuid,barrier=1,noauto_da_alloc,discard,lazytime  wait,check
 /dev/block/bootdevice/by-name/metadata       /metadata       ext4    noatime,nosuid,nodev,discard                                    wait,formattable,wrappedkey

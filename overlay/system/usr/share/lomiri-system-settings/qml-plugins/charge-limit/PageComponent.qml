@@ -1,42 +1,9 @@
 /*
  * Charge limit page for Lomiri System Settings -- Xiaomi Mi A3 (laurel_sprout).
  *
- * A pure-QML plugin: no C++ and no .so. Sixteen of the shipped plugins already
- * work this way (any .settings manifest with no "plugin" key), so nothing here
- * needs a build step -- it is data files in the overlay.
- *
- * This page only writes a config file. It has no privileges and needs none:
- * battery-charge-limit.service runs as root, re-reads that file on every poll
- * and applies the value, so a change here takes effect within
- * CHARGE_POLL_INTERVAL (30s by default) with no restart and no sudo.
- *
- * The file is deliberately a plain data file rather than a systemd
- * EnvironmentFile -- it is user-writable and consumed by a root process, so an
- * EnvironmentFile would let it set arbitrary environment on that process
- * (LD_PRELOAD being the obvious one). The service-side parser accepts only
- * CHARGE_LIMIT and CHARGE_RESUME, matched by a sed whose sole capture group is
- * [0-9]{1,3} anchored to end of line, then range-checked. See
- * battery-charge-limit.sh.
- *
- * Qt.labs.settings writes INI, so setValue("CHARGE_LIMIT", 85) produces
- *
- *     [General]
- *     CHARGE_LIMIT=85
- *
- * The [General] header simply does not match the service's pattern and is
- * ignored. Verified against the on-device GNU sed 4.9, including CRLF.
- *
- * SWITCHING THE SERVICE OFF, from an unprivileged page:
- *
- *   off -> write CHARGE_ENABLED=0. The running service reads that on its next
- *          poll, restores charging and exits 0. Restart=on-failure, so the
- *          clean exit sticks and the unit really does go inactive.
- *   on  -> rewrite the same file. battery-charge-limit.path is watching it and
- *          starts the service again.
- *
- * No polkit rule, no D-Bus service, no setuid helper -- the entire privilege
- * boundary is a file this user owns and a parser that accepts three integer
- * keys and nothing else.
+ * Pure-QML plugin (no C++/.so). It only writes the config file that
+ * battery-charge-limit.service re-reads every poll; a change takes effect
+ * within ~30s with no restart and no sudo. See DEVELOPMENT.md.
  */
 
 import QtQuick 2.12
@@ -52,20 +19,15 @@ ItemPage {
     title: i18n.tr("Charging")
     flickable: scrollWidget
 
-    /* Hardcoded rather than derived from StandardPaths: Ubuntu Touch is
-     * single-user and System Settings always runs as "phablet". The service
-     * side takes CHARGE_USER_CONF= if that ever stops being true, and the two
-     * defaults must agree. */
+    // Hardcoded: UT is single-user and System Settings runs as "phablet".
     property string confPath: "/home/phablet/.config/battery-charge-limit"
 
     property int  limitValue: 80
     property bool optimiseEnabled: true
     property bool loaded: false
 
-    /* The slider deliberately stops at 95, not 100. "No limit" is what the
-     * switch expresses; a slider that can also mean it would give two controls
-     * for one state. The service still accepts a hand-written CHARGE_LIMIT=100
-     * as "off", for people editing the file directly. */
+    // Slider stops at 95; "no limit" is the switch's job. A hand-written
+    // CHARGE_LIMIT=100 still counts as off.
     readonly property int minLimit: 50
     readonly property int maxLimit: 95
 
@@ -93,9 +55,7 @@ ItemPage {
         conf.setValue("CHARGE_ENABLED", optimiseEnabled ? 1 : 0)
         conf.setValue("CHARGE_LIMIT", limitValue)
         conf.setValue("CHARGE_RESUME", Math.max(0, limitValue - 5))
-        // Write now rather than on destruction: the service polls this file and
-        // the .path unit watches it, so both want the change on disk promptly.
-        conf.sync()
+        conf.sync()   // this file is polled/watched, so flush promptly
     }
 
     Flickable {
@@ -127,9 +87,7 @@ ItemPage {
                 divider.visible: true
                 highlightColor: "transparent"
 
-                // Greyed out rather than hidden when the switch is off, so the
-                // control the switch governs stays visible and the page does
-                // not change height as it is toggled.
+                // Greyed out rather than hidden when the switch is off.
                 enabled: root.optimiseEnabled
                 opacity: enabled ? 1.0 : 0.5
 
@@ -159,12 +117,10 @@ ItemPage {
                             return Math.round(v / 5) * 5 + "%"
                         }
 
-                        // Snap to 5% steps; finer granularity is meaningless
-                        // against a fuel gauge that reports whole percent.
+                        // Snap to 5% steps.
                         onValueChanged: root.limitValue = Math.round(value / 5) * 5
 
-                        // Write once the finger lifts, not on every pixel of
-                        // drag -- this file is polled, not watched.
+                        // Save once the finger lifts, not on every drag pixel.
                         onPressedChanged: if (!pressed) root.save()
                     }
                 }

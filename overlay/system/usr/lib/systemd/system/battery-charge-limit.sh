@@ -1,61 +1,17 @@
 #!/bin/sh
-# Charge limiter for the Xiaomi Mi A3 (laurel_sprout).
-#
-# Keeps the pack below a configurable state of charge so it does not spend its
-# life sitting at 4.4 V, which is what actually ages a lithium cell. Started by
+# Charge limiter for the Xiaomi Mi A3 (laurel_sprout). Started by
 # battery-charge-limit.service.
 #
-# --- WHICH KNOB, AND WHY ------------------------------------------------------
+# Writes /sys/class/power_supply/battery/charging_enabled (the one qpnp-smb5
+# writeable prop that stops the cell without cycling the pack). The value is
+# never read back: the getter is the effective result across all voters, so it
+# can't tell our vote from thermal/JEITA. We just assert want=0/1 from capacity
+# every poll; vote() is idempotent.
 #
-# The charger is a PMI632 driven by qpnp-smb5. Its battery power_supply exposes
-# a lot of charging properties but smb5_batt_prop_is_writeable() only accepts a
-# handful, and of those exactly two can stop a charge:
-#
-#   charging_enabled  -> vote(chg->chg_disable_votable, USER_VOTER, ...)
-#                        Stops charging the cell. The input path stays up, so
-#                        the phone runs off the charger instead of the battery.
-#   input_suspend     -> smblib_set_prop_input_suspend()
-#                        Cuts the input entirely. The phone then discharges the
-#                        battery even though it is plugged in -- the opposite of
-#                        what we want, and it cycles the pack.
-#
-# So charging_enabled. VOLTAGE_MAX (float voltage) would be the better lever --
-# capping at ~4.1 V ages the cell far less than cycling between 75% and 80% at
-# 4.4 V -- but POWER_SUPPLY_PROP_VOLTAGE_MAX is absent from the writeable list,
-# so voltage_max returns -EPERM. That needs a kernel change; this does not.
-#
-# --- WHY WE NEVER READ charging_enabled BACK ----------------------------------
-#
-# The getter is  val->intval = !get_effective_result(chg->chg_disable_votable)
-# (qpnp-smb5.c:1800) -- the EFFECTIVE result across every voter, not just the
-# USER_VOTER this script writes. A read of 0 therefore cannot distinguish "we
-# stopped it" from "the thermal / JEITA / FCC-stepper voter stopped it".
-# Branching on it would couple this loop to voters it knows nothing about.
-#
-# Instead we decide want=0/1 from capacity alone and assert it every poll.
-# vote() is idempotent, so re-writing the same value costs nothing, and if
-# another voter is independently holding charging off our vote simply sits
-# behind theirs and takes effect when they release.
-#
-# --- CONFIGURATION ------------------------------------------------------------
-#
-# Two layers, in increasing precedence:
-#
-#   1. Unit defaults, and root-owned EnvironmentFiles. See the .service file.
-#   2. USER_CONF, re-read on every poll so edits apply within POLL_INTERVAL
-#      with no restart and no root. This is the layer a person actually uses.
-#
-# USER_CONF is owned and written by the unprivileged desktop user, while this
-# script runs as root -- so it is deliberately NOT an EnvironmentFile and NOT
-# sourced. systemd's EnvironmentFile would let anything in that file set any
-# environment variable on a root process (LD_PRELOAD being the obvious one), and
-# `.` would execute it outright. Both are privilege escalation from a
-# user-writable path.
-#
-# It is parsed instead with a sed that can only ever emit 1-3 digits, and the
-# result is range-checked before use. The worst a malformed or hostile file can
-# do is be ignored, and the worst a valid one can do is pick a charge threshold,
-# which is the entire point of the feature.
+# USER_CONF is written by the unprivileged user and read by this root script, so
+# it is parsed by hand with a digits-only sed and range-checked -- never sourced
+# and never an EnvironmentFile (both would be privilege escalation). See
+# DEVELOPMENT.md.
 
 B=/sys/class/power_supply/battery
 
@@ -96,8 +52,8 @@ resolve_limits() {
     ul=$(conf_get CHARGE_LIMIT)
     ur=$(conf_get CHARGE_RESUME)
 
-    # CHARGE_ENABLED is deliberately independent of the rest: an off switch must
-    # still be honoured even if the limit value alongside it is garbage.
+    # CHARGE_ENABLED is independent of the rest: honour an off switch even if
+    # the limit beside it is garbage.
     case "$ue" in
         0|1) enabled=$ue; source=$USER_CONF ;;
     esac
@@ -105,9 +61,7 @@ resolve_limits() {
     is_num "$ul" || return 0
     [ "$ul" -ge 50 ] && [ "$ul" -le 100 ] || return 0
 
-    # A hand-written CHARGE_LIMIT of 100 means "no limit", which is the same
-    # thing the switch expresses. The UI never writes it -- its slider stops at
-    # 95 and it uses CHARGE_ENABLED instead -- but people edit this file.
+    # A hand-written CHARGE_LIMIT of 100 means "no limit".
     if [ "$ul" -ge 100 ]; then
         enabled=0
     fi
@@ -149,14 +103,8 @@ last_desc=
 while :; do
     resolve_limits
 
-    # Switched off -> hand the charger back and exit 0. Restart=on-failure means
-    # a clean exit stays exited, so `systemctl status` genuinely reads inactive
-    # rather than "running but doing nothing".
-    #
-    # Getting started again is battery-charge-limit.path's job: it watches this
-    # same config file, so flipping the switch back on rewrites the file and
-    # systemd starts us. That is the whole reason an unprivileged settings page
-    # can stop and start a root service without a polkit rule or a helper.
+    # Switched off -> hand the charger back and exit 0 (the clean exit sticks;
+    # battery-charge-limit.path restarts us when the file changes again).
     if [ "$enabled" = "0" ]; then
         log "optimisation off (${source}); charging unrestricted, exiting"
         echo 1 > "$B/charging_enabled" 2>/dev/null
@@ -180,9 +128,8 @@ while :; do
     elif [ "$cap" -le "$resume" ]; then
         want=1
     fi
-    # Between resume and limit neither branch fires and $want carries over.
-    # That is the hysteresis: without it the charger would toggle continuously
-    # at the threshold.
+    # Between resume and limit neither branch fires and $want carries over
+    # (hysteresis).
 
     if [ "$want" != "$last_want" ]; then
         if [ "$want" = "0" ]; then

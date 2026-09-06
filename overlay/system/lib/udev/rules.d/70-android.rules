@@ -1,34 +1,9 @@
-# Ubuntu Touch / Halium udev rules - Xiaomi Mi A3 (laurel_sprout, sm6125/trinket)
-#
-# Replaces the empty /lib/udev/rules.d/70-android.rules placeholder, whose own
-# comment reads "Keep this file empty, it gets replaced by device-specific rules
-# at run-time". Shipped through the overlay store; systemd-udevd is explicitly
-# ordered After=mount-halium-overlay.service so these land before udev runs.
-#
-# Body generated per the UBports porting guide
-# (docs.ubports.com/en/latest/porting/configure_test_fix/Lomiri.html) from this
-# device's own ueventd files:
-#
-#   cat /android/system/etc/ueventd.rc /android/vendor/ueventd.rc \
-#     | grep ^/dev | sed -e 's/^\/dev\///' \
-#     | awk '{printf "ACTION==\"add\", KERNEL==\"%s\", OWNER=\"%s\", GROUP=\"%s\", MODE=\"%s\"\n",$1,$3,$4,$2}'
-#
-# Note the guide's command reads /var/lib/lxc/android/rootfs/ueventd*.rc, which
-# does not exist on Android 11 - the system rules (including /dev/dri) live in
-# /android/system/etc/ueventd.rc, so both files must be concatenated.
-#
-# Two adaptations were required for this Ubuntu Touch base; see the bottom of
-# the file for the second.
-#
-# 1. Group names. Ubuntu Touch exposes the Android groups as android_*:
-#      graphics -> android_graphics (1003)
-#      input    -> android_input    (1004)
-#      media    -> android_media    (1013)
-#    The bare names do not exist here (and "input" exists as Ubuntu's gid 121,
-#    which is NOT the Android input group), so they are remapped below.
-#    Groups with no Ubuntu Touch equivalent (camera, drmrpc, log, mtp, nfc,
-#    oem_*, uhid, usb, vpn, wifi) are left as-is: udev applies MODE and skips
-#    the unknown ownership.
+# Halium udev rules for Xiaomi Mi A3 (laurel_sprout), generated from the
+# container's ueventd.rc per the UBports porting guide. Android groups are
+# remapped to Ubuntu Touch's android_* names (graphics -> android_graphics,
+# input -> android_input, media -> android_media); groups with no UT
+# equivalent are left as-is. See DEVELOPMENT.md for the full derivation and
+# the sysname-matching fixes at the bottom of this file.
 
 ACTION=="add", KERNEL=="null", OWNER="root", GROUP="root", MODE="0666"
 ACTION=="add", KERNEL=="zero", OWNER="root", GROUP="root", MODE="0666"
@@ -274,31 +249,10 @@ ACTION=="add", KERNEL=="hardwareinfo", OWNER="root", GROUP="system", MODE="0660"
 ACTION=="add", KERNEL=="msm_npu", OWNER="system", GROUP="system", MODE="0644"
 ACTION=="add", KERNEL=="spidev0.1", OWNER="system", GROUP="system", MODE="0660"
 
-# --- Adaptation 2: sysname matching -----------------------------------------
-#
-# udev matches KERNEL== against the kernel *sysname*, not the /dev node path.
-# For the DRM nodes the sysname is "card0" / "renderD128" (P: .../drm/card0);
-# "dri/card0" is only the node name (N:). So the generated "dri/*",
-# "graphics/*" and "input/*" rules above never match anything.
-#
-# Without these, systemd's /lib/udev/rules.d/50-udev-default.rules wins:
-#     SUBSYSTEM=="drm", KERNEL!="renderD*", GROUP="video"
-#     SUBSYSTEM=="drm", KERNEL=="renderD*", GROUP="render", MODE="0660"
-# leaving the DRM nodes root:video / root:render, which the container's
-# android.hardware.graphics.composer@2.4-service (running as system with groups
-# graphics+drmrpc) cannot open - it exits 1 in a restart loop and never
-# registers IComposer, so Lomiri gets no display.
-#
-# Android's own /android/system/etc/ueventd.rc asks for: /dev/dri/* 0666 root graphics
+# Sysname matching: udev matches KERNEL== against the sysname, not the node
+# path, so the generated "dri/*" / "graphics/*" rules never fire. Re-match the
+# DRM and framebuffer nodes by sysname or the composer HAL cannot open them.
+# Input nodes are left to 65-android.rules. See DEVELOPMENT.md.
 SUBSYSTEM=="drm", KERNEL=="card*",    OWNER="root", GROUP="android_graphics", MODE="0666"
 SUBSYSTEM=="drm", KERNEL=="renderD*", OWNER="root", GROUP="android_graphics", MODE="0666"
-
-# Legacy framebuffer, same sysname issue ("fb0", not "graphics/fb0").
 SUBSYSTEM=="graphics", KERNEL=="fb[0-9]*", OWNER="root", GROUP="android_graphics", MODE="0660"
-
-# Input is deliberately NOT repeated here: /lib/udev/rules.d/65-android.rules
-# already does KERNEL=="event[0-9]*", GROUP="android_input", MODE="0660"
-# correctly, and duplicating it risks fighting that rule.
-#
-# kgsl-3d0 and ion need no correction - their sysnames match the generated
-# rules directly, and GROUP="system" (gid 1000) exists on Ubuntu Touch.

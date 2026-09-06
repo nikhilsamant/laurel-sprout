@@ -1,52 +1,7 @@
-# Camera flash LED permissions for Xiaomi Mi A3 (laurel_sprout).
-#
-# The torch toggle in Ubuntu Touch lives in ayatana-indicator-power, not in a
-# separate app -- /usr/libexec/ayatana-indicator-power/ayatana-indicator-power-service
-# carries a hardcoded list of candidate sysfs nodes and writes brightness to the
-# first one that exists:
-#
-#   /sys/class/leds/torch-light/brightness
-#   /sys/class/leds/led:flash_torch/brightness
-#   /sys/class/leds/flashlight/brightness
-#   /sys/class/leds/torch-light0/brightness      <- this device
-#   /sys/class/leds/torch-light1/brightness
-#   /sys/class/leds/led:torch_0/brightness
-#   /sys/class/leds/led:torch_1/brightness
-#
-# plus a companion "switch" list (led:switch, led:switch_0, white:flash) for the
-# qpnp-flash-v2 style controllers that need the torch current set on one node and
-# then the emitter armed on another.
-#
-# The kernel side is already correct: CONFIG_LEDS_QPNP_FLASH_V2=y comes in from
-# vendor/trinket-perf_defconfig and the device exposes led:flash_{0,1},
-# led:switch_{0,1}, led:torch_{0,1} and torch-light0 (the latter parented to
-# soc:qcom,camera-flash@0). The button appears in the indicator and does nothing
-# because every one of those nodes is root:root 0644 and the indicator runs as
-# the unprivileged phablet user, so the write fails with EACCES and is swallowed.
-#
-# Nothing else fixes this on the way past:
-#   - Android's ueventd only chowns the notification LEDs (red/green/blue) in
-#     /android/vendor/ueventd.rc:365-376; it never touches the flash nodes,
-#     because on Android the torch is driven through the camera HAL rather than
-#     through sysfs.
-#   - The stock udev rules mention SUBSYSTEM=="leds" only for kbd_backlight and
-#     for TAG+="seat"; neither sets permissions.
-#
-# So hand the three nodes the indicator can reach to group "video" (gid 44),
-# which phablet is already a member of. udev's own OWNER/GROUP/MODE keys only
-# apply to device nodes under /dev, not to sysfs attributes, hence RUN+=.
-#
-# torch-light0 is the node this device will actually use. Note that permissions
-# are only HALF the flashlight fix: torch-light0's brightness_set in
-# drivers/media/platform/msm/camera_v2/sensor/flash/msm_flash.c fired the torch
-# trigger and nothing else, which on leds-qpnp-flash-v2 only programs the
-# per-channel current and leaves the emitter dark. That is patched in the kernel
-# tree so the node is self-contained; see the Flashlight section of the README.
-#
-# The whole set is covered rather than just torch-light0 because the indicator
-# pairs a node from its torch list with one from its switch list, and which pair
-# it settles on has not been observed directly.
-# Kept on one line on purpose: udev does accept a backslash continuation, but a
-# rule that fails to parse here fails silently and the symptom is indistinguishable
-# from the bug it fixes.
+# Camera flash LED permissions. ayatana-indicator-power writes torch brightness
+# as the unprivileged phablet user, but the LED nodes are root:root 0644. Hand
+# the candidate torch/switch nodes to group video (phablet is a member). RUN+=
+# because udev's GROUP=/MODE= keys do not apply to sysfs attributes. Kept on one
+# line: a rule that fails to parse fails silently. See DEVELOPMENT.md (the kernel
+# half of the fix is in the kernel tree).
 ACTION=="add|change", SUBSYSTEM=="leds", KERNEL=="torch-light0|torch-light1|led:torch_0|led:torch_1|led:switch_0|led:switch_1", RUN+="/bin/chgrp video /sys%p/brightness", RUN+="/bin/chmod 0664 /sys%p/brightness"
