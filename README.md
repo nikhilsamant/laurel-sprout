@@ -17,7 +17,7 @@ SoC sm6125/trinket), built on the LineageOS 23.2 kernel (4.14).
 - [x] Notification LED, vibration, flashlight
 - [x] Battery percentage, online & offline charging, RTC time, shutdown / reboot
 - [x] SD card
-- [x] ADB and SSH over USB (`rndis_adb`)
+- [x] ADB over USB; SSH after `sudo systemctl enable --now ssh` (see [`DEVELOPMENT.md`](DEVELOPMENT.md#usb-connectivity-adb--ssh))
 - [x] UBports recovery (adb + fastbootd), OTA updates
 - [x] AppArmor, Anbox/Waydroid patches, Waydroid & Libertine
 

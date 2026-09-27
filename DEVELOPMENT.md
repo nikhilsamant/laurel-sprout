@@ -104,7 +104,6 @@ replacements:
 |---|---|
 | `lightdm.service.d/99-laurel-sprout-device-hacks.conf` | `After=`/`Wants=device-hacks.service`, so the composer is up before lomiri-system-compositor starts |
 | `usb-moded.service.d/00-laurel-sprout-unbind-udc.conf` | the `ExecStartPre` that unbinds the configfs gadget from its UDC |
-| `multi-user.target.wants/ssh.service` | enables sshd, which ships `disabled` on the base rootfs (see [USB connectivity](#usb-connectivity-adb--ssh)) |
 | `adbd.service.d/10-laurel-sprout-wait-ffs.conf` | an `ExecStartPost` that holds adbd's activation until its FunctionFS descriptors are written (see [Mode switches racing adbd](#mode-switches-racing-adbd)) |
 
 Both used to *replace* a stock drop-in (`ubuntu-touch-session.conf` and
@@ -1101,7 +1100,6 @@ off first -- exactly the reported behaviour.
 |---|---|
 | `CONFIG_USB_CONFIGFS_RNDIS=y` | `halium.config` in the kernel tree |
 | default mode `rndis_adb` | `overlay/system/etc/usb-moded/90-device-specific-config.ini` |
-| enable sshd | `overlay/system/usr/lib/systemd/system/multi-user.target.wants/ssh.service` |
 | real VID/PIDs | `overlay/system/etc/default/usb-moded.d/device-specific-config.conf` |
 
 `rndis_adb` is the only stock mode carrying both a network function and adb
@@ -1127,15 +1125,31 @@ kernel those steps fail, and since the script is `#!/bin/bash` with no `-e` it
 does not stop, carrying on to rewrite idVendor/idProduct and re-write the UDC on
 the gadget usb-moded has just built.
 
-sshd is enabled outright rather than given an `rndis_adb-ssh.ini` appsync entry.
-An appsync entry would race: `rndis_adb` has `network = 0`, so the address is
-added by `usb-moded-tethering.service` (also a `post` entry), and
+sshd is left to the user rather than shipped enabled. An
+`rndis_adb-ssh.ini` appsync entry would race: `rndis_adb` has `network = 0`, so
+the address is added by `usb-moded-tethering.service` (also a `post` entry), and
 `usb-moded-ssh.service` has `ListenAddress=10.15.19.82:8022` -- binding before
 that address exists makes sshd exit 255, which its own
-`RestartPreventExitStatus=255` then declines to retry. Enabling `ssh.service`
-sidesteps the ordering entirely and also gives SSH over Wi-Fi. Note it listens on
-port **22** on all interfaces (the base `sshd_config` sets no `Port` or
-`ListenAddress`), not on 8022; `usb-moded-ssh.service` stays available on 8022
+`RestartPreventExitStatus=255` then declines to retry.
+
+An earlier version shipped `multi-user.target.wants/ssh.service` in the overlay.
+It never took effect: `mount-halium-overlay.service` binds the overlay about 8 s
+into boot and runs `systemctl daemon-reload`, but `multi-user.target`'s start
+job is already queued by then, and a reload does not add new `Wants=` to it.
+The journal showed no `ssh.service` activity on any boot. It was removed
+rather than fixed, because it would also have opened sshd (port **22**, all
+interfaces -- the base `sshd_config` sets no `Port` or `ListenAddress`) on every
+device running the port. Enable it per device instead; `/etc/systemd/system`
+is on userdata, so this survives reflashing:
+
+```
+sudo systemctl enable --now ssh
+```
+
+The base `sshd_config` sets `PasswordAuthentication=no`, so a key is needed in
+`~phablet/.ssh/authorized_keys`. From a Mac, which has no RNDIS driver, SSH over
+USB goes through adb instead: `adb forward tcp:2222 tcp:22`, then
+`ssh -p 2222 phablet@localhost`. `usb-moded-ssh.service` stays available on 8022
 whenever rescue mode or `developer_mode` is active.
 
 ### Rescue mode is deliberately still on
@@ -1144,7 +1158,7 @@ whenever rescue mode or `developer_mode` is active.
 `etc/default/usb-moded.d/device-specific-config.conf`, and the stock file's own
 comment qualifies that with "Only do this if you're sure your device will boot".
 It is left enabled here until one boot has confirmed that `rndis_adb` configures
-cleanly, `usb0` holds `10.15.19.82`, sshd is listening and adb survives past the
+cleanly, `usb0` holds `10.15.19.82` and adb survives past the
 seven-minute mark. Turning it off removes the last automatic way back in, and
 this port has already lost its gadget once (see the unbind-udc drop-in).
 
