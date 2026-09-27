@@ -1039,12 +1039,17 @@ the bind-mount is how to find that out cheaply.
   autosleep works these are the next candidates; releasing `venus` in particular
   looks free, since nothing on this port decodes video at idle. Needs measuring
   one at a time against the 0.767 W baseline.
-- **No repowerd configuration.** fp4 ships `REPOWERD_BACKLIGHT_BACKEND=sysfs`
+- **repowerd environment.** fp4 ships `REPOWERD_BACKLIGHT_BACKEND=sysfs`
   and `REPOWERD_DISABLE_BOOSTER=true` because the Android lights HAL misbehaves
-  with repowerd there, plus a `config-default.xml` with an auto-brightness
-  curve. Whether any of that applies here is unmeasured, so nothing has been
-  copied — screen backlight is usually the largest single consumer once the
-  above two are fixed.
+  with repowerd there. Whether that applies here is unmeasured, so it has not
+  been copied — screen backlight is usually the largest single consumer once
+  the above two are fixed. The auto-brightness curve is now shipped as
+  `usr/share/repowerd/device-configs/config-LAUREL_SPROUT.xml`: repowerd loads
+  `config-default.xml` (which sets `config_automatic_brightness_available`
+  false) and then `config-<DeviceInfo name>.xml`, and `device-info` reports
+  `LAUREL_SPROUT`. The curve is LineageOS's nits table mapped onto 0-255 with
+  its own `2 nits = 1, 450 nits = 255` backlight line. The directory has a
+  `.halium-overlay-dir` marker since the file is new. **Unverified on device.**
 
 ## USB connectivity (adb + SSH)
 
@@ -1644,9 +1649,25 @@ longer established.
   read-only, so none of those snippets execute -- including
   `30-no-surface-flinger`. Anything that relies on them must be done
   through the overlay instead.
-- **MTP.** `Error setting MTP` / `-EBUSY` still logged. Harmless now (no
-  panic), but USB/MTP is not functional; the UT-side gadget claims it
-  first.
+- **MTP.** `f_mtp` backs one static `mtp_device`, so only one configfs
+  instance can exist (the `_mtp_dev` guard in `mtp_setup_configfs_dev()`
+  returns `-EBUSY`). Android's `init.qcom.usb.rc` creates
+  `g1/functions/mtp.gs0` at boot, and usb-moded's stock
+  `function_mtp = mtp.mtp` then fails:
+  `functions/mtp.mtp: mkdir failed: Device or resource busy`. The overlay's
+  `90-device-specific-config.ini` sets `function_mtp = mtp.gs0` so both sides
+  name the same instance; usb-moded skips the mkdir for a registered function
+  and init's mkdir of an existing directory is `EEXIST`, so boot order no
+  longer matters. **Unverified on device.** MTP is also only exposed in the
+  `mtp` / `mtp_adb` modes; the default `rndis_adb` (see
+  [USB connectivity](#usb-connectivity-adb--ssh)) carries no MTP function.
+- **Double-tap to wake.** deviceinfo `DoubleTapToWake` pointed at
+  `/etc/writable/dt2w_enable`, which does not exist, so repowerd logged
+  `FsDoubleTapToWake: Invalid config path` and the settings toggle did
+  nothing. It now points at `/sys/bus/i2c/devices/1-0038/fts_gesture_mode`
+  (`1`/`0`, checked in `fts_ts_suspend()`). The wake itself is unverified:
+  the maintainer's unit has the touch-firmware fault described under
+  [Fingerprint (FOD)](#fingerprint-fod).
 - **AppArmor mediation.** `/sys/kernel/security/apparmor/features/` lacks
   `dbus` and `network`, so Ubuntu Touch app confinement is incomplete.
   Note the AppArmor patch set at `glasskernel/for_apparmor` is
