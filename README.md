@@ -15,14 +15,10 @@ SoC sm6125/trinket), built on the LineageOS 23.2 kernel (4.14).
 - [x] Audio: earpiece, loudspeaker, microphone, volume keys
 - [x] Cameras (front & back): photo, video, switch, flash
 - [x] Notification LED, vibration, flashlight
-- [x] Battery percentage, online charging, RTC time, shutdown / reboot
+- [x] Battery percentage, online & offline charging, RTC time, shutdown / reboot
 - [x] SD card
 - [x] UBports recovery (adb + fastbootd), OTA updates
 - [x] AppArmor, Anbox/Waydroid patches, Waydroid & Libertine
-
-## Partial
-
-- [ ] Offline charging
 
 ## Not working yet
 
