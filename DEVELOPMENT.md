@@ -105,6 +105,7 @@ replacements:
 | `lightdm.service.d/99-laurel-sprout-device-hacks.conf` | `After=`/`Wants=device-hacks.service`, so the composer is up before lomiri-system-compositor starts |
 | `usb-moded.service.d/00-laurel-sprout-unbind-udc.conf` | the `ExecStartPre` that unbinds the configfs gadget from its UDC |
 | `multi-user.target.wants/ssh.service` | enables sshd, which ships `disabled` on the base rootfs (see [USB connectivity](#usb-connectivity-adb--ssh)) |
+| `adbd.service.d/10-laurel-sprout-wait-ffs.conf` | an `ExecStartPost` that holds adbd's activation until its FunctionFS descriptors are written (see [Mode switches racing adbd](#mode-switches-racing-adbd)) |
 
 Both used to *replace* a stock drop-in (`ubuntu-touch-session.conf` and
 `ubports-usb-moded-configurator.conf` respectively) and therefore had to carry a
@@ -1146,6 +1147,34 @@ It is left enabled here until one boot has confirmed that `rndis_adb` configures
 cleanly, `usb0` holds `10.15.19.82`, sshd is listening and adb survives past the
 seven-minute mark. Turning it off removes the last automatic way back in, and
 this port has already lost its gadget once (see the unbind-udc drop-in).
+
+### Mode switches racing adbd
+
+After a reboot, or after any mode switch, adb could stay dead until Developer
+Mode was toggled off and on (sometimes more than once). The journal shows the
+same sequence every time it failed:
+
+```
+434.783 adbd: main.cpp:291 adbd started
+434.784 usb_moded: /sys/kernel/config/usb_gadget/g1//UDC: write failure: No such device
+434.785 adbd: usb_ffs.cpp:276 opening control endpoint /dev/usb-ffs/adb/ep0
+434.818 usb_moded: mode setting failed, try charging_only
+```
+
+The appsync entries for the adb modes start `adbd.service` with
+`systemd_wait = 1`, and usb-moded writes `UDC` as soon as the unit is active.
+`adbd.service` is `Type=notify`, but adbd sends `READY=1` from `main()` before
+its USB thread has opened `ep0` and written the descriptors. Binding a gadget
+whose ffs function has no descriptors yet fails in
+`ffs_do_functionfs_bind()` (`desc_ready ? 0 : -ENODEV`), so the mode fails and
+usb-moded falls back to charging-only. The result depends on timing, which is
+why it only sometimes failed.
+
+The drop-in adds an `ExecStartPost` that waits (up to 5 s) for
+`/dev/usb-ffs/adb/ep1`. The kernel creates the ep files in the same `ep0` write
+that sets `desc_ready`, so once `ep1` exists the bind will succeed. With
+`Type=notify`, systemd marks the unit active only after `ExecStartPost` exits,
+so usb-moded's wait now covers the descriptor write.
 
 ### Applying it to a device that has already saved a mode
 
