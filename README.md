@@ -26,7 +26,7 @@ SoC sm6125/trinket), built on the LineageOS 23.2 kernel (4.14).
 ## Not working yet
 
 - [ ] Auto-brightness
-- [ ] Fingerprint — under-display sensor, needs Halium 12
+- [ ] Fingerprint — sensor activation solved (bypasses a touch-firmware fault confirmed present on stock MIUI too); see [`DEVELOPMENT.md`](DEVELOPMENT.md#fingerprint-fod)
 - [ ] Double-tap to wake
 
 ## Won't fix (hardware / UT limitation)

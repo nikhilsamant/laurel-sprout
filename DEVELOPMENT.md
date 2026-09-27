@@ -1287,6 +1287,352 @@ DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/32011/bus \
   systemctl --user restart ayatana-indicator-power
 ```
 
+## Fingerprint (FOD)
+
+The Mi A3's sensor is a Goodix optical under-display unit (`goodix_fod`,
+module `ofilm`), driven by a HIDL 2.1 stack: kernel driver
+(`drivers/input/fingerprint/goodix_fod/gf_spi.c`) -> vendor HAL
+(`/vendor/lib64/hw/fingerprint.goodix_fod.so`, backed by `libgf_hal.so`) ->
+`android.hardware.biometrics.fingerprint@2.1-service` -> biometryd ->
+Lomiri's fingerprint settings page.
+
+**FOD does not work on stock either, on this unit.** A stock-ROM session
+(2026-09-09, V12.0.26.0.RFQMIXM + Magisk root, the latest and correct
+package for this device) established that there are *two stacked
+failures*, and that this port had already reached stock parity before
+hitting the second one. Neither is port-specific.
+
+### Failure A: the touch controller never enables FOD (hard, not fixable in software)
+
+`FTS_REG_FOD_EN` (`0xCF`) on the Focaltech FT3518 accepts writes at the
+I2C level and discards them. Verified on stock, directly against
+`fts_rw_reg`:
+
+```
+control (0xD0, gesture_en):  write 01 -> read back 01   STICKS
+target  (0xCF, FOD_EN):      write 01/02/03 -> "success" -> read back 00
+```
+
+Tested in every state that matters: screen on; `Dozing` with gesture mode
+confirmed active (`D0=01`); and with `/sys/class/touch/tp_dev/fod_status`
+set to 1, which drives the driver's own `fts_fod_suspend()` ->
+`fts_write_reg(FTS_REG_FOD_EN, ...)` path and logs
+`CF register fod's bit set 1, CF register = 2` followed by
+`Enter into FOD(suspend) successfully!` -- the driver's write returns OK
+and the readback is still `00`.
+
+`fts_fod_readdata()` (`focaltech_gesture.c`) opens with
+`if ((ret < 0) || (buf[0] < 1) || (buf[0] > 3)) return 1;` on that
+register, so with `0xCF` pinned at `0` **no `KEY_FOD` can ever be
+emitted** by any software stack. CF bit0 = double-tap wake, bit1 = FOD.
+
+Correction to an earlier reading: the dmesg line
+`fts_ts_resume:resume CF register value retry write, CF register = %x`
+prints the value *being written* (computed from
+`tid->fod_status || tid->aod_status`, `|= lpwg_mode`), **not** a failed
+readback. Seeing `= 0` there just means nothing had set `fod_status`. It
+is not evidence of the defect; the direct register writes above are.
+
+Suspected cause -- the touch module is not factory-programmed:
+
+```
+/proc/touchscreen/lockdown_info  ->  0000000000000000   (blank)
+hardware_info = none,ft3518,fw:0x11     buildid = ffffff80-11
+driver wants focaltech-ft3518-none.ini; ROM ships only -sumsung.ini
+```
+
+The IC itself is correct (`IC ID:0x5452` *is* the FT3518 per
+`FTS_CHIP_TYPE_MAPPING`; `FTS_MODULE_ID 0x0000` means vendor-ID `0x00` is
+expected, so neither is an anomaly). But the lockdown region that encodes
+panel maker/colour/version is erased and the firmware is a generic `0x11`
+build. Consistent with a replaced/reflashed display module carrying
+generic Focaltech firmware without Xiaomi's FOD feature -- basic touch and
+double-tap work, only FOD is absent. Not confirmed; the panel *is* the
+expected `dsi_r692a9_gvo` (Visionox).
+
+**This port's `KEY_FOD` injection is a working bypass, and it works on
+stock too** -- injecting `EV_KEY 0x152` on `/dev/input/event2` (via
+`sendevent`, or any writer; `phablet`/`shell` is in `android_input`)
+produces, in the stock HAL:
+
+```
+I/FingerprintHal: [gf_finger_pressure_detecting_thread] touch panel detected finger down
+```
+
+Stock has no such bypass, which is why an unaided stock enrolment shows
+one illuminate handshake and then a 60 s timeout (`error 3`): MIUI's own
+software never sees a finger-down either.
+
+### Root cause of Failure A: this port's own kernel flashed the touch IC
+
+**The port kernel overwrote the genuine Xiaomi touch firmware with an invalid
+placeholder.** `focaltech_touch_f9s/focaltech_config.h` shipped:
+
+```c
+#define FTS_AUTO_UPGRADE_EN    1                              /* flash every boot */
+#define FTS_GET_MODULE_NUM     0                              /* no module-id check */
+#define FTS_UPGRADE_FW_FILE    "include/firmware/fw_sample.i"
+```
+
+`fw_sample.i` is not a stub -- it is a real 271 KB firmware image, **version
+0x11**, and upstream's own comment above that define reads *"you must replace
+it with your own ... the sample one to be replaced is invalid"*. It never was.
+`fts_fwupg_need_upgrade()` returns true on **any** version difference, in
+either direction, so the first boot of a kernel built from this tree reflashed
+the touch controller.
+
+Proof, byte level (2026-09-09):
+
+| | version @ `0x10E` | head |
+|---|---|---|
+| genuine, from stock `boot.img` kernel | `0x81` (comp `0x7E`) | `0221c802 b938e402` |
+| `fw_sample.i` (this tree) | `0x11` (comp `0xEE`) | `0221c802 c8f7e402` |
+| **the device** | **`0x11`** | -- |
+
+Every Failure A symptom follows: `fw:0x11`, the lockdown region at flash
+`0x1e000` erased to all-zero, `panel_maker = none`, the driver hunting a
+nonexistent `focaltech-ft3518-none.ini`, and -- decisively -- `0xCF`
+(`FTS_REG_FOD_EN`) unimplemented, so writes are ACKed and discarded. The
+earlier "replaced display module" theory was wrong; the damage is
+self-inflicted and, in principle, repairable.
+
+Stock never repairs it: stock's auto-upgrade is gated off, so the device sits
+on `0x11` indefinitely.
+
+**Fixed in the kernel tree** (`halium-11`): `FTS_AUTO_UPGRADE_EN` set to `0`
+and `FTS_UPGRADE_FW{,2,3}_FILE` repointed at a new
+`include/firmware/fw_laurel_sprout_v81.i` carrying the genuine image.
+**This was a port-wide hazard** -- any Mi A3 that booted a build from this
+tree lost FOD the same way.
+
+### Restoring the firmware: blocked in userspace
+
+The genuine image is extracted and kept at
+`device-backup/fts-firmware/fts_stock_ft3518_v81.bin` (49640 B, md5
+`17c433f77584b4f03b6819a0d7281a95`; it appears 3x in the stock kernel as
+`fw_file`/`fw_file2`/`fw_file3`, all identical).
+
+`fts_upgrade_bin` reads it correctly but **cannot get the IC into the
+bootloader**:
+
+```
+fts_read_file: file len:49640 read len:49640          <- file fine
+fts_wait_tp_to_valid: TP Ready, Device ID = 0x54      <- fw "valid"
+fts_fwupg_reset_to_boot: send 0xAA and 0x55 to FW     <- reset IS sent (reg 0xFC)
+fts_fwupg_enter_into_boot: pram not supported, confirm in bootloader
+fts_fwupg_get_boot_state: read boot id:0x0000         <- chip never answers
+fts_ft5452_upgrade: enter into pramboot/bootloader fail, ret=-5
+```
+
+The placeholder firmware does not implement the `0xFC` reset-to-bootloader
+command, so it cannot hand over control to be replaced. Tried and failed
+identically: normal upgrade; upgrade from a clean state (`fod_status=0`,
+screen on, gesture off); and three attempts immediately after a hardware GPIO
+reset via `cat fts_hw_reset` (which runs `fts_reset_proc(0)`) to catch the ROM
+boot window. Boot id read `0x0000` every time. `fts_force_upgrade` is a no-op
+here -- `upgrade_func_ft5452` has no `.force_upgrade`, so it logs
+"force_upgrade function is null" and returns.
+
+Note `fts_boot_mode` reporting "tp is in boot mode" is a red herring: it
+reflects `fw_is_running`, which is SPI-only and defaults to 0 on this I2C part.
+
+No damage from the attempts -- the IC still answers (`chip id 0x54`), IRQ
+enabled, touch working.
+
+**Software repair is impossible on this unit: the touch controller cannot be
+reset.** Four build/flash/test rounds settled this (2026-09-09/10). The patched
+driver was verified running each time -- kernel `4.14.357-openela-perf-g<sha>`,
+built from the fork's `fts-oneshot-repair`, with the genuine v0x81 image present
+in the kernel and the placeholder absent (checked by searching the
+gzip-decompressed kernel for both blobs).
+
+Getting a log needed a trick worth remembering: `fastboot boot` is unavailable
+(Xiaomi's ABL answers `unknown command`), and a Halium boot image gives no
+usable userspace on a stock install. But on an A/B device **recovery lives
+inside boot.img**, so flashing the repair kernel to `boot_b` and booting
+*recovery* on that slot runs the patched driver and gives a working adb shell.
+
+What the rounds showed:
+
+| attempt | result |
+|---|---|
+| handshake immediately after `fts_reset_proc(0)` | `read boot id:0x0000` |
+| 13 delays swept 0-40ms x 3 | 138 probes, **all** `0x0000`, `ret=0` |
+| handshake blanketed 50ms (250 writes x 200us) x 5 resets | 2500 handshakes, `nak=0`, still `0x0000` |
+| `vdd` regulator power cycle x 3 | `nak=0`, still `0x0000` |
+
+The decisive line came from `fts_reset_line_check()`, which reads while holding
+reset asserted:
+
+```
+reset line: held-low ret=2 (want <0), released ret=2 id=0x54
+```
+
+**The controller ACKs and returns chip id 0x54 while its reset line is held
+low.** A part in reset cannot answer, so the reset GPIO does nothing here, and
+the controller has never passed through mask ROM -- there was never a ROM
+listening for the 0x55/0xAA handshake. The power cycle fails for the same class
+of reason: `regulator_disable()` only drops a refcount, and the `vdd` rail is
+evidently held up by another consumer (the panel is the obvious candidate; only
+`vcc_i2c` is a dummy regulator on this board).
+
+Note `FTS_DEBUG_EN` is **0** in this tree, so `FTS_DEBUG` compiles to nothing
+and `fts_fwupg_get_boot_state()`'s boot id never prints. The repair branch sets
+it to 1. `fts_log_level` is the IC's own log level and is unrelated -- raising
+it does nothing for driver logging.
+
+This explains the asymmetry that made the damage possible. Flashing *away* from
+the genuine firmware worked because v0x81 implements the `0xFC`
+reset-to-bootloader command and cooperatively hands over control; no hardware
+reset is needed. Flashing *back* cannot work, because the placeholder does not
+implement `0xFC` and the hardware reset that would bypass it is inert. A
+one-way door: the part can be talked out of its firmware but not back into it.
+
+The only remaining route is external -- an I2C programmer (CH341, bus pirate)
+on the touch flex with the phone powered down, so the controller is genuinely
+unpowered and comes up in mask ROM when the programmer powers it. That is a
+hardware job and out of scope here.
+
+**None of this touches Failure B.** Even a perfect firmware restore leaves the
+`GF_ERROR_PREPROCESS_FAILED errno=1011` trustlet failure, which blocks
+enrolment independently and reproduces on stock.
+
+Origin of the fix: Origin of the fix: Remaining idea, untried: patch the driver to add a hardware-reset-into-romboot
+recovery path (`fts_fwupg_reset_to_romboot()` already exists but is wired only
+into the pramboot flow, which ft5452 does not use) and boot it non-permanently
+via `fastboot boot`. Uncertain -- `fts_ft5452_upgrade()`'s flash routine targets
+bootloader mode, not romboot.
+
+### Failure B: the Goodix trustlet fails the preprocess command
+
+With injection supplying finger-down, stock captures on every touch and
+then fails identically to this port:
+
+```
+E/[GF_HAL][CaEntry]: [sendCommand] QSEE TEE execute command failed.
+E/[GF_HAL][CaEntry]: [sendCommand] exit. err=GF_ERROR_PREPROCESS_FAILED, errno=1011
+E/[GF_HAL][Algo]:    [enrollImage] exit. err=GF_ERROR_PREPROCESS_FAILED, errno=1011
+```
+
+Same errno 1011 this port saw across 260 attempts. Two things this
+establishes:
+
+- The error surfaces from `CaEntry::sendCommand` -- it is a **TEE-side
+  command failure**, not the image-quality rejection it was read as.
+- It reproduces **with no finger on the sensor at all**, so it is not
+  about image content or capture quality.
+
+It does *not*, on its own, prove the cause is missing calibration -- a
+trustlet failing preprocess because it has no calibration parameters
+would look exactly like this too. That remains the leading hypothesis.
+
+### What is proven healthy (do not re-investigate)
+
+Goodix's own factory test app ships on stock as
+`/system/app/GfDisplayTest/GfDisplayTest.apk`
+(`com.goodix.fingerprint.gftest.MainActivity`):
+
+| Test | cmd | Result |
+|---|---|---|
+| SPI TEST | `0x621` | **Success** -- Sensor `0x1303`, PMIC `0x0ba9`, Flash `0x001342c8`, MCU `0x2` |
+| RST/INT TEST | `0x620` | **Success** (`errorCode = 0`) |
+
+So the optical sensor, its PMIC, flash, MCU, reset line and IRQ are all
+good. Also verified healthy: the trustlet loads
+(`QSEECOMAPI: Loaded image: APP id = 6`); HAL init is clean and resolves
+`force_touch_path = /dev/input/event2`; TZ/keymaster work (PIN unlock);
+`persist` is a **single, non-slotted** partition so A/B slot mistakes
+cannot corrupt it; no SELinux denials against fingerprint/goodix/persist.
+
+### Calibration data: it exists, in persist
+
+The earlier "this sensor has never been calibrated" conclusion was drawn
+from looking only at `/data/vendor/goodix/`. The real data is in persist:
+
+```
+/mnt/vendor/persist/goodix/BMatrix.so        1225980 B
+/mnt/vendor/persist/goodix/caliParamsInfo.so  675620 B
+/mnt/vendor/persist/goodix/chartbase.so        86068 B
+```
+
+All three are structurally valid -- each opens with a little-endian length
+header whose value is exactly `filesize - 52` (`0x0012b4c8`, `0x000a4ef0`,
+`0x00015000`) -- and are high-entropy, not zeroed. Backed up off-device.
+
+`/data/vendor/goodix/{gf_cali,gf_data,factory_test}/` are still empty, and
+the per-sensor `gf_cali/CaliParam/` set that `libgf_hal.so`'s path
+templates point at does not exist. That set is the outstanding gap.
+
+### Reaching Goodix test/calibration commands: use the supported path
+
+`GfDisplayTest.apk` issues these commands through
+`com.goodix.FingerprintService` ->
+`IGoodixFingerprintDaemon::sendCommand`, and it round-trips cleanly
+(observed for `0x620`/`0x621`). **This is the route to use.**
+
+Do **not** resume the ptrace-injection-into-`fpservice` approach from the
+earlier session (it crashed the HAL three times and killed it once). It
+was solving a problem that has a normal solution, and it was aimed at
+`testKbCalibration` on the strength of a calibration diagnosis that is no
+longer established.
+
+### Still open
+
+- Whether the missing `/data/vendor/goodix/gf_cali/CaliParam/` set is what
+  the trustlet's preprocess command is failing on. Untested.
+- Generating that set is **blocked by a second, different gate**, tested
+  2026-09-09. `SPMTActivity` in `GfDisplayTest.apk` is the factory
+  calibration entry point and it runs: `SPI Test Succeed`, `MT_CHECK Test
+  Succeed`, `SPI_RST_INT Test Succeed`, it renders the green capture spot
+  at the FOD location (so illumination is fine), and it then prompts
+  `请放置肉色砝码` -- "place the flesh-coloured weight", a Goodix factory
+  fixture with known optical properties, not a finger.
+
+  With a real finger on the spot **and `KEY_FOD` injected**, it fails:
+
+  ```
+  0x61 Flesh or Chart Down/up Timeout
+  ```
+
+  The HAL's `gf_finger_pressure_detecting_thread` logged the injected
+  finger down/up each time, so the injection was delivered -- the
+  calibration path simply does not accept it. **The `KEY_FOD` bypass
+  works for the enrol/auth path but not for the factory calibration
+  path**, which wants the sensor's own flesh/chart down-up detection.
+  Nothing was written: persist md5s unchanged, `/data/vendor/goodix`
+  still empty.
+
+  So `CMD_MMI_OPTICAL_CALIBRATION_TEST` is not reachable this way, and
+  calibration cannot currently be regenerated on this unit even with the
+  supported client path. A proper calibration block would still leave the
+  `0x61` detection gate to solve.
+- Whether a generic-firmware touch module can be reflashed with Xiaomi's
+  FOD-capable FT3518 firmware. The driver exposes `fts_upgrade_bin` and
+  `fts_force_upgrade`, but the ROM ships no `.img` (only a `-sumsung`
+  self-test `.ini`) and the kernel's bundled `FTS_UPGRADE_FW_FILE` is the
+  `fw_sample.i` placeholder. No known good firmware source.
+- **A firmware downgrade within Android 11 is a dead end.** Compared the
+  V12.0.22.0.RFQMIXM firmware-only OTA against the V12.0.26.0.RFQMIXM
+  fastboot package (2026-09-09): `modem` (`NON-HLOS.bin`, the partition
+  mounted at `/vendor/firmware_mnt`, which carries the Goodix trustlet
+  `gfcep`) and `tz` are **byte-identical** -- md5 `70a97c5ed07c437f...`
+  (117198848 B) and `35b136b3fbd1d6a9...` (2007040 B). Both ship
+  `Nicobar.LA.1.0-00182-STD.PROD-1` (2021-11-19). Other images differ
+  only by block padding (the OTA `.img`s are padded, the fastboot
+  `.mbn`/`.elf`s are not); `abl` differs for real but is irrelevant here.
+  So the trustlet is unchanged across these builds and downgrading to
+  V12.0.22.0 cannot affect errno 1011. The device reports `anti: 0`, so
+  ARB does not block a downgrade -- but only V12.0.11.0.RFQMIXM
+  (2021-06-15, firmware predating the 2021-11-19 meta-build) could
+  actually change the variable, and it is not readily obtainable.
+
+- Even if Failure B were solved, Failure A still needs the `KEY_FOD`
+  injection bypass on any OS, plus `sys.panel.display=VXN` and
+  `extCmd(COMMAND_NIT=10, PARAM_NIT_FOD=1)` paired at finger down/up.
+  Vendor acquire codes observed on stock: `21` at enrol start, then
+  `22`/`23` for down/up -- matching LineageOS's `UdfpsHandler` 22/23
+  scheme, contrary to an earlier note here claiming 21 replaced them.
+
 ## Known open issues
 
 - **Stale property area.** A failed container attempt leaves
