@@ -1497,7 +1497,7 @@ hardware job and out of scope here.
 `GF_ERROR_PREPROCESS_FAILED errno=1011` trustlet failure, which blocks
 enrolment independently and reproduces on stock.
 
-Origin of the fix: Origin of the fix: Remaining idea, untried: patch the driver to add a hardware-reset-into-romboot
+Remaining idea, untried: patch the driver to add a hardware-reset-into-romboot
 recovery path (`fts_fwupg_reset_to_romboot()` already exists but is wired only
 into the pramboot flow, which ft5452 does not use) and boot it non-permanently
 via `fastboot boot`. Uncertain -- `fts_ft5452_upgrade()`'s flash routine targets

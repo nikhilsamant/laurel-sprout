@@ -6,7 +6,7 @@ SoC sm6125/trinket), built on the LineageOS 23.2 kernel (4.14).
 ## Working
 
 - [x] Boots to UI, GPU acceleration, hardware video playback
-- [x] Display, manual brightness, touchscreen, auto-rotation
+- [x] Display, manual brightness, touchscreen, double-tap to wake, auto-rotation
 - [x] Secure lockscreen
 - [x] RIL: calls, SMS, MMS, PIN unlock, call audio routing, in-call volume
 - [x] Mobile data (4G / 5G), VoLTE
@@ -16,6 +16,7 @@ SoC sm6125/trinket), built on the LineageOS 23.2 kernel (4.14).
 - [x] Cameras (front & back): photo, video, switch, flash
 - [x] Notification LED, vibration, flashlight
 - [x] Battery percentage, online charging, RTC time, shutdown / reboot
+- [x] SD card
 - [x] UBports recovery (adb + fastbootd), OTA updates
 - [x] AppArmor, Anbox/Waydroid patches, Waydroid & Libertine
 
@@ -27,7 +28,6 @@ SoC sm6125/trinket), built on the LineageOS 23.2 kernel (4.14).
 
 - [ ] Auto-brightness
 - [ ] Fingerprint — sensor activation solved (bypasses a touch-firmware fault confirmed present on stock MIUI too); see [`DEVELOPMENT.md`](DEVELOPMENT.md#fingerprint-fod)
-- [ ] Double-tap to wake
 
 ## Won't fix (hardware / UT limitation)
 
@@ -38,7 +38,7 @@ SoC sm6125/trinket), built on the LineageOS 23.2 kernel (4.14).
 
 ## Untested
 
-- [ ] Dual SIM, factory reset, SD card, FM radio
+- [ ] Dual SIM, factory reset, FM radio
 - [ ] MTP / ADB over USB, wireless external monitor, long-uptime stability
 
 ## Build
