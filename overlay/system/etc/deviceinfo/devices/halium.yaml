@@ -25,6 +25,9 @@ LAUREL_SPROUT:
   OfonoImplementsIms: true
   FilesystemEncryption: true
 
+  # Double tap to wake. 
+  DoubleTapToWake: "/etc/writable/dt2w_enable|1|0"
+
   # Waterdrop notch, top centre. Physical px on the 720x1560 panel. Avoidance
   # areas only on the collapsed bar; a centre cutout splits the row in two, so
   # the expanded row is left as one run. Geometry from the LineageOS framework
