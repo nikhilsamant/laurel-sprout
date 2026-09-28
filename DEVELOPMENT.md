@@ -1031,9 +1031,19 @@ the bind-mount is how to find that out cheaply.
   (`qcom,fv-max-uv = <4400000>` in `laurel_sprout-trinket-battery.dtsi`,
   confirmed on device: `voltage_max=4400000`), but
   `smb5_batt_prop_is_writeable()` does not list
-  `POWER_SUPPLY_PROP_VOLTAGE_MAX`, so `voltage_max` returns `-EPERM`. The setter
-  itself exists and votes `BATT_PROFILE_VOTER` on `fv_votable`; only the
-  writeable list is missing the case. A one-line kernel change would expose it.
+  `POWER_SUPPLY_PROP_VOLTAGE_MAX`, so `voltage_max` returns `-EPERM`.
+  Adding it to that list is **not** the fix. The setter votes
+  `BATT_PROFILE_VOTER` on `fv_votable`, which is the vote `qpnp-qg` sets from
+  the battery profile (`qpnp-qg.c` after profile load) and which
+  `step-chg-jeita.c` reads back as the pack maximum. A userspace write would
+  replace the profile's vote, be silently undone on the next profile load, and
+  skew the JEITA checks. (It could not exceed 4.4 V: `HW_LIMIT_VOTER` also votes
+  `qcom,fv-max-uv`, and FV is `VOTE_MIN`.) The safe shape is a separate voter,
+  e.g. a `fv_user_limit_uv` attribute on the smb5 device that votes
+  `USER_VOTER` on FV, clamped to [3.6 V, `qcom,fv-max-uv`], `0` to clear. It
+  is only worth adding together with a charge-limit mode that uses it, and that
+  policy change needs its own multi-day battery measurement against the
+  current 80%/75% cycling.
 - **Pinned PIL subsystems.** `venus`, `cdsp` and `ipa_fws` sit ONLINE
   indefinitely, and `device-hacks` pins `modem` on purpose for Wi-Fi. Once
   autosleep works these are the next candidates; releasing `venus` in particular
@@ -1736,9 +1746,22 @@ longer established.
   Note the AppArmor patch set at `glasskernel/for_apparmor` is
   robustness/security backports only and does **not** add these
   mediation types.
-- **Device name.** The initrd logs `WARNING: Didn't find a device name`,
-  so Halium device-specific config (including the
-  `/usr/lib/lxc-android-config/70-$device.rules` lookup) is skipped.
+- **Device name warning (harmless).** The initrd logs
+  `WARNING: Didn't find a device name`. The prebuilt halium-boot
+  `scripts/halium` greps `^ro.product.device=` in
+  `/android-system/build.prop`, but the Halium 11 GSI is system-as-root: its
+  props are in `/system/build.prop` and the key is
+  `ro.product.system.device`. Even if found it would be `halium_arm64`. The
+  value is only used to bind `/usr/lib/lxc-android-config/70-$device.rules`,
+  and this port ships its own `70-android.rules` through the overlay, so
+  nothing is lost. A real fix belongs upstream in halium-boot.
+- **udev `Unknown user/group` warnings (harmless).** About 400 per boot, which
+  is 19 distinct lines of `70-android.rules` repeated on every rules reload. The
+  file is generated from Android's `ueventd.rc`, whose names (`camera`,
+  `media`, `drmrpc`, `oem_29xx`, `nfc`, ...) do not exist on Ubuntu Touch. udev
+  drops only that OWNER/GROUP assignment; the rule's MODE still applies. Every
+  device these rules cover works, so the names are left as generated rather
+  than remapped.
 
 ## AppArmor patch set
 

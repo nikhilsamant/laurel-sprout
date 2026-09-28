@@ -6,9 +6,9 @@ SoC sm6125/trinket), built on the LineageOS 23.2 kernel (4.14).
 ## Working
 
 - [x] Boots to UI, GPU acceleration, hardware video playback
-- [x] Display, manual brightness, touchscreen, auto-rotation
+- [x] Display, manual & auto brightness, touchscreen, auto-rotation
 - [x] Secure lockscreen
-- [x] RIL: calls, SMS, MMS, PIN unlock, call audio routing, in-call volume
+- [x] RIL: calls, SMS, MMS, PIN unlock, call audio routing, in-call volume, dual SIM
 - [x] Mobile data (4G / 5G), VoLTE
 - [x] Wi-Fi, Bluetooth (+ BT audio), flight mode, hotspot
 - [x] GPS, proximity, accelerometer / gyroscope
@@ -16,28 +16,28 @@ SoC sm6125/trinket), built on the LineageOS 23.2 kernel (4.14).
 - [x] Cameras (front & back): photo, video, switch, flash
 - [x] Notification LED, vibration, flashlight
 - [x] Battery percentage, online & offline charging, RTC time, shutdown / reboot
+- [x] Battery life — stable and long-lasting on 24.04-1.x
 - [x] SD card
-- [x] ADB over USB; SSH after `sudo systemctl enable --now ssh` (see [`DEVELOPMENT.md`](DEVELOPMENT.md#usb-connectivity-adb--ssh))
-- [x] UBports recovery (adb + fastbootd), OTA updates
+- [x] ADB and MTP over USB, USB mode switching from Settings; SSH after `sudo systemctl enable --now ssh` (see [`DEVELOPMENT.md`](DEVELOPMENT.md#usb-connectivity-adb--ssh))
+- [x] UBports recovery (adb + fastbootd), OTA updates, factory reset
 - [x] AppArmor, Anbox/Waydroid patches, Waydroid & Libertine
 
 ## Not working yet
 
-- [ ] Auto-brightness — repowerd curve added, unverified
-- [ ] MTP — function-name clash with Android init fixed, unverified; not in the default `rndis_adb` mode
+- [ ] VoLTE does not re-register after an LTE dropout until the next reboot
 - [ ] Double-tap to wake — control path fixed, unverified (touch-firmware fault on the test unit)
 - [ ] Fingerprint — sensor activation solved (bypasses a touch-firmware fault confirmed present on stock MIUI too); see [`DEVELOPMENT.md`](DEVELOPMENT.md#fingerprint-fod)
 
 ## Won't fix (hardware / UT limitation)
 
 - [ ] NFC
+- [ ] FM radio — no FM chip on the board (none in the device tree; the WCN3990 has no FM receiver)
 - [ ] Wireless charging
 - [ ] Wired external monitor — USB-C 2.0 only
 - [ ] 90 Hz / 120 Hz refresh rates — UT limitation
 
 ## Untested
 
-- [ ] Dual SIM, factory reset, FM radio
 - [ ] Wireless external monitor, long-uptime stability
 
 ## Build
