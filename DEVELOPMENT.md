@@ -1152,15 +1152,35 @@ USB goes through adb instead: `adb forward tcp:2222 tcp:22`, then
 `ssh -p 2222 phablet@localhost`. `usb-moded-ssh.service` stays available on 8022
 whenever rescue mode or `developer_mode` is active.
 
-### Rescue mode is deliberately still on
+### Rescue mode is off
 
-`fairphone-fp4` sets `USB_MODED_ARGS=""` in its
-`etc/default/usb-moded.d/device-specific-config.conf`, and the stock file's own
-comment qualifies that with "Only do this if you're sure your device will boot".
-It is left enabled here until one boot has confirmed that `rndis_adb` configures
-cleanly, `usb0` holds `10.15.19.82` and adb survives past the
-seven-minute mark. Turning it off removes the last automatic way back in, and
-this port has already lost its gadget once (see the unbind-udc drop-in).
+`device-specific-config.conf` sets `USB_MODED_ARGS=""`, as `fairphone-fp4`
+does. It was kept on at first, until a boot had confirmed that `rndis_adb`
+configures cleanly and adb stays up.
+
+Leaving it on turned out to be what broke adb after every reboot with the cable
+attached. A `-D` boot shows why:
+
+```
+13.417 control_cable_state: unknown -> pc_connected
+13.417 in_rescue_mode: 0 -> 1
+13.417 selected mode = developer_mode
+19.187 init_done -> reached
+19.187 rescue_mode: 1 -> 0
+19.187 selected mode = developer_mode
+40.621 DBUS method_call com.meego.usb_moded.mode_request   (ignored)
+```
+
+`rescue_mode` clears at `init_done`, but `in_rescue_mode` is latched per cable
+connection and only drops on disconnect, so the first mode stays
+`developer_mode` for as long as the cable is plugged in. That mode is
+`sysfs_value = rndis` with no adbd appsync, and the session's request for the
+saved mode is ignored. A Developer Mode toggle, or unplugging the cable, was
+the only way out. If a mode fails to set now, usb-moded falls back to
+`charging_only`, and recovery still has adb.
+
+The value takes effect because systemd applies `EnvironmentFile=` after
+`Environment=` for the same variable.
 
 ### Mode switches racing adbd
 
