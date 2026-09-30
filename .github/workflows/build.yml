@@ -1,0 +1,90 @@
+# Builds the kernel + boot/dtbo images and a devel-flashable rootfs, then
+# publishes them as a GitHub release (the ubports-installer config points here).
+name: Build and release
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # required for creating releases
+
+env:
+  ADAPTATION_TOOLS_BRANCH: main
+  # Run ./build.sh (repo wrapper) instead of ./build/build.sh: it seeds the
+  # clang toolchain with `ld` before the kernel build (see build.sh).
+  ADAPTATION_TOOLS_USE_BUILD_WRAPPER: "1"
+  ROOTFS_URL: "https://ci.ubports.com/job/ubuntu-touch-rootfs/job/ubports%252F24.04-1.x/lastSuccessfulBuild/artifact/ubuntu-touch-android9plus-rootfs-arm64.tar.gz"
+  OTA_CHANNEL: "24.04-1.x/arm64/android9plus/daily"
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        # toolchains + kernel checkout + objects need ~30G
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
+
+      - name: Setup build environment
+        run: |
+          sudo apt update
+          sudo apt install -y --no-install-recommends \
+            android-tools-mkbootimg bc bison build-essential ca-certificates cpio curl \
+            fakeroot flex git img2simg kmod libelf-dev libssl-dev libtinfo5 lz4 python2 \
+            python3 sudo unzip wget xz-utils
+          sudo ln -sf python2 /usr/bin/python
+
+      - name: Build device tarball
+        run: |
+          git clone -b "$ADAPTATION_TOOLS_BRANCH" \
+            https://gitlab.com/ubports/porting/community-ports/halium-generic-adaptation-build-tools.git build
+          ./build.sh -b workdir
+
+      - name: Clean up to get more space
+        run: |
+          rm -rf workdir
+          df -h /
+
+      - name: Build devel-flashable rootfs
+        run: |
+          sudo --preserve-env=ROOTFS_URL,OTA_CHANNEL ./build/prepare-fake-ota.sh out/device_laurel_sprout_usrmerge.tar.xz ota
+          sudo ./build/system-image-from-ota.sh ota/ubuntu_command images || true
+          ls -lh out images
+
+      - name: Collect release files
+        run: |
+          mkdir release
+          cp images/boot.img release/boot.img
+          cp images/dtbo.img release/dtbo.img
+          # rootfs.img is ~3G raw ext4; compress it to fit under the 2G asset limit
+          (cd images && tar -cJf ../release/UT-24.04-1.x-devel-flashable.tar.xz rootfs.img)
+          (cd release && sha256sum * | tee SHA256SUMS)
+
+      - name: Upload to artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: images
+          path: release/*
+          if-no-files-found: error
+
+      - name: Publish GitHub release
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('UT-24.04-1.x_v{0}', github.run_number) }}
+          name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('Ubuntu Touch 24.04-1.x build #{0}', github.run_number) }}
+          files: release/*
+          body: |
+            Automated build for ${{ github.repository }}
+            Commit: ${{ github.sha }}
+            Triggered by: ${{ github.actor }}
+
+            `boot.img` and `dtbo.img` are what the UBports installer flashes; the
+            rootfs comes from the `${{ env.OTA_CHANNEL }}` system-image channel.
+            `UT-24.04-1.x-devel-flashable.tar.xz` holds a raw `rootfs.img` for manual flashing.
