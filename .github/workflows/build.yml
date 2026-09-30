@@ -59,11 +59,14 @@ jobs:
 
       - name: Collect release files
         run: |
+          for f in boot.img dtbo.img system.img; do
+            [ -f "images/$f" ] || { echo "images/$f missing"; exit 1; }
+          done
           mkdir release
           cp images/boot.img release/boot.img
           cp images/dtbo.img release/dtbo.img
-          # rootfs.img is ~3G raw ext4; compress it to fit under the 2G asset limit
-          (cd images && tar -cJf ../release/UT-24.04-1.x-devel-flashable.tar.xz rootfs.img)
+          # system.img (sparse) is what `fastboot flash system` takes; xz keeps it under the 2G asset limit
+          (cd images && tar -cJf ../release/UT-24.04-1.x-devel-flashable.tar.xz system.img)
           (cd release && sha256sum * | tee SHA256SUMS)
 
       - name: Upload to artifacts
@@ -87,4 +90,4 @@ jobs:
 
             `boot.img` and `dtbo.img` are what the UBports installer flashes; the
             rootfs comes from the `${{ env.OTA_CHANNEL }}` system-image channel.
-            `UT-24.04-1.x-devel-flashable.tar.xz` holds a raw `rootfs.img` for manual flashing.
+            `UT-24.04-1.x-devel-flashable.tar.xz` holds a sparse `system.img` for `fastboot flash system`.
